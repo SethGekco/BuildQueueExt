@@ -125,8 +125,10 @@ if(H->Production && !RulesExt::Global()->AllowParallelAIQueues) { … return 0x4
 ```
 
 `AllowParallelAIQueues` defaults to **true** (✔ `src/Ext/Rules/Body.h:175`), and the
-guard is gated on `H->Production` (⚠ believed to be the AI-production flag — *not
-independently verified*; verify before relying on it). So:
+guard is gated on `H->Production` — YRpp declares this as
+`bool Production; // AI production has begun.` (✔ `YRpp/HouseClass.h:823`), so it is
+the AI flag as suspected. *Corroborate in-game via the P0 probe (Q3) before P2 leans
+on it — a YRpp comment is good evidence, not proof.* So:
 
 - **"Use another idle war factory" is already solved** for AI, and the alternate-exit
   search exists in vanilla/Antares regardless — `BuildingClass_KickOutUnit_FindAlternateKickout`
@@ -146,6 +148,19 @@ feature. Worth confirming before building anything larger.
 ---
 
 ## 4. Feature #1 — queue lock / hold (first deliverable)
+
+> **⚠ The hold primitive may already exist.** `FactoryClass` carries `OnHold`,
+> `IsSuspended`, and `IsManual` — YRpp documents the last as *"whether the current
+> suspension state was caused by the player"* — plus `Suspend(bool manual)`
+> `0x4C9E60` / `Unsuspend(bool manual)` `0x4C9EA0` (✔ `YRpp/FactoryClass.h`). That is
+> close to the semantics this section proposed to invent, and vanilla already
+> suspends production from the cameo (Antares' hook at `0x6AB773` is literally named
+> `…_ProduceUnsuspended`). **P0's probe exists to settle this before any code is
+> written here** (Q1/Q2). If confirmed, #1 shrinks from "build a hold system" to
+> "extend suspension to queued items + free the front + draw a glyph."
+>
+> None of `Suspend`/`Unsuspend`/`StartProduction`/`CompletedProduction` is hooked by
+> any framework in the registry (✔) — unclaimed ground.
 
 ### Behavior
 - A queued item may be toggled **Held**: no progress, no credit drain. A
