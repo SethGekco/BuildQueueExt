@@ -60,7 +60,11 @@ DEFINE_HOOK(0x4C9E60, BQExt_FactoryClass_Suspend, 0x5)
 	return 0;
 }
 
-DEFINE_HOOK(0x4C9EA0, BQExt_FactoryClass_Unsuspend, 0x5)
+// Size 0x6, not 0x5: Syringe stamps 5 bytes and resumes at addr+max(size,5),
+// and 0x4C9EA0+5 lands inside an instruction. 0x6 covers whole instructions
+// (sub esp,0xC / push esi / mov esi,ecx). This handler returns 0, so the stub's copied-bytes path really
+// is taken and the resume address really is reached.
+DEFINE_HOOK(0x4C9EA0, BQExt_FactoryClass_Unsuspend, 0x6)
 {
 	GET(FactoryClass*, pThis, ECX);
 	GET_STACK(bool, manual, 0x4);
@@ -77,7 +81,11 @@ DEFINE_HOOK(0x4C9EA0, BQExt_FactoryClass_Unsuspend, 0x5)
 // the factory picks the next item. If a suspended item blocks, this never
 // fires while one is held; if the queue advances past it, it does.
 
-DEFINE_HOOK(0x4CA5A0, BQExt_FactoryClass_StartProduction, 0x5)
+// Size 0x7, not 0x5: Syringe stamps 5 bytes and resumes at addr+max(size,5),
+// and 0x4CA5A0+5 lands inside an instruction. 0x7 covers whole instructions
+// (push esi / mov esi,ecx / push edi / mov eax,[esi+0x50]). This handler returns 0, so the stub's copied-bytes path really
+// is taken and the resume address really is reached.
+DEFINE_HOOK(0x4CA5A0, BQExt_FactoryClass_StartProduction, 0x7)
 {
 	GET(FactoryClass*, pThis, ECX);
 
@@ -103,7 +111,11 @@ DEFINE_HOOK(0x4CA1A0, BQExt_FactoryClass_CompletedProduction, 0x5)
 // (The contended three-way site is 0x4CA07A, further into the body; we stay
 // well clear of it.)
 
-DEFINE_HOOK(0x4C9FF0, BQExt_FactoryClass_AbandonProduction_Entry, 0x5)
+// Size 0x6, not 0x5: Syringe stamps 5 bytes and resumes at addr+max(size,5),
+// and 0x4C9FF0+5 lands inside an instruction. 0x6 covers whole instructions
+// (sub esp,0xC / push esi / mov esi,ecx). This handler returns 0, so the stub's copied-bytes path really
+// is taken and the resume address really is reached.
+DEFINE_HOOK(0x4C9FF0, BQExt_FactoryClass_AbandonProduction_Entry, 0x6)
 {
 	GET(FactoryClass*, pThis, ECX);
 
