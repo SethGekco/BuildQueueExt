@@ -1,339 +1,360 @@
-# BuildQueueExt — Design
+# BuildQueueExt — Design (rev 3)
 
-A production / build-queue subsystem for Red Alert 2: Yuri's Revenge, built as a
-standalone Syringe DLL that **coexists with Phobos** and is built against
-**Antares** (not classic Ares — see [[antares-replaces-ares]]).
+A production **and sidebar** subsystem for Red Alert 2: Yuri's Revenge. Standalone
+Syringe DLL, coexists with Phobos, built against **Antares** ([[antares-replaces-ares]]).
 
-Four asks, all touching the same engine state — the per-house production queues:
+**Rev 3 merges the former SidebarExt project into this one** (see §0). The two were
+separate designs fighting over the same code: production decides *what is in a queue*,
+the sidebar decides *where that queue is shown*, and every interesting question the
+modder asked lives exactly on the seam between them.
 
-- **#1 Queue lock / hold.** Park a queued (or completed) item indefinitely, cameo
-  showing a hold glyph, instead of the guessed 99999-build-count hack.
-- **#2 Multiple simultaneous constructions**, capped, cap raisable by a building.
-- **#3 Multiple vehicles building at once**, taking turns exiting one factory or
-  using another idle one.
-- **#4 New factory types + exit/output control** — where a factory outputs, a tag
-  letting infantry exit a war factory (or vice-versa), superweapon delivery.
+Scope:
 
-Status: **design draft, revision 2.** No code. Revision 2 followed an audit of the
-YR-Hook-Encyclopedia registry and the Antares source, which **overturned three
-conclusions of revision 1** — see §0.
+| # | Ask | Verdict |
+|---|---|---|
+| 1 | Queue lock / hold | primitive may already exist (§5) |
+| 2 | Several buildings at once | two different asks (§6) |
+| 3 | Several vehicles at once | only N-fronts is new (§6) |
+| 4 | New factory type / exit + output control | **BuildCat is the answer** (§7) |
+| 5 | 3-column cameo grid | arithmetic, not architecture (§9) |
+| 6 | Floating cameo panels | `ControlClass`, per PR #1379's post-mortem (§9) |
+| 7 | Exclusive SW sidebar extensions | layer on merged PR #1384 (§8) |
+| 8 | >4 tabs | 56 mechanical sites (§9) |
 
-Addresses are ✔ (confirmed) or ⚠ (unverified) per `SpawnExt/DESIGN.md` convention.
-
----
-
-## 0. What the audit changed (read this first)
-
-Revision 1 was written from a framework-docs survey. Checking the registry and
-Antares source per [[hook-encyclopedia-workflow]] corrected it on three points:
-
-1. **The "production channel" primitive already exists — I don't get to invent
-   it.** Antares' `HouseExt::ExtData` already carries exactly five channel slots
-   (§1). Rev 1 proposed this as a new abstraction; it is in fact the shape of
-   existing code, which is a validation but also means BuildQueueExt must *extend
-   Antares' table*, not introduce a parallel one.
-2. **Parallel factories already ship, for the AI.** `AllowParallelAIQueues`
-   (default **true**) already governs whether a house may run several factories of
-   one category at once. Rev 1 scoped #2/#3 as "raise concurrency from 1" — wrong
-   framing: for AI houses that already happens, and the real gap is the *human*
-   player and the *per-item* front (§3).
-3. **The 4-tab cap is not a wall, and tabs are not this DLL's territory.** The
-   research doc concluded a 5th tab needs deep new engine work. **SidebarExt**
-   (sibling DLL, decided 2026-08-20) has since disassembled the region and found
-   the 4-tab and 2-column caps are *arithmetic, not architecture* (~83 mechanical
-   indexing sites in one contiguous module). So a 5th tab is feasible — and it
-   belongs to SidebarExt, not here (§7).
-
-Net effect: BuildQueueExt gets **smaller and better-defined**. It owns queue
-*semantics*; Antares owns the channel table; SidebarExt owns pixels.
+Addresses ✔ (confirmed) / ⚠ (unverified), per `SpawnExt/DESIGN.md` convention.
 
 ---
 
-## 1. The one idea — the production channel (as the engine already models it)
+## 0. Revision history — what each audit overturned
 
-The state is a per-house table of **production channels**. Antares implements it
-literally, at `src/Ext/House/Body.h:97-101` (✔ read):
+**Rev 2** (registry + Antares source audit) killed three rev-1 claims: the production
+channel already exists in Antares; parallel factories already ship for the AI; the
+4-tab cap is arithmetic, not a wall.
+
+**Rev 3** (this one) merges SidebarExt and adds the finding that reframes ask #4:
+
+> **`BuildCat` is a six-value enum and vanilla only uses two of them.**
+> ```cpp
+> enum class BuildCat : unsigned int {
+>     DontCare = 0, Tech = 1, Resoure = 2,      // [sic] engine's own typo
+>     Power = 3, Infrastructure = 4, Combat = 5
+> };
+> ```
+> (✔ `YRpp/GeneralDefinitions.h:644`.) Vanilla instantiates `DontCare` (Buildings tab)
+> and `Combat` (Defense tab). **`Tech`, `Resoure`, `Power`, `Infrastructure` are
+> dormant.** A "third factory type that shares the ConYard but has its own queue" is
+> not a new mechanism — it is the *defense tab pattern*, which already works, using an
+> enum slot that already exists.
+
+Rev 3 also corrects the rev-2 framing of the channel key. It is not a 5-slot table;
+it is a **3-tuple**, and the engine says so itself (✔ `YRpp/HouseClass.h:689,692`):
 
 ```cpp
-BuildingClass *Factory_BuildingType;
-BuildingClass *Factory_InfantryType;
-BuildingClass *Factory_VehicleType;
-BuildingClass *Factory_NavyType;      // NOTE: naval is its own channel
-BuildingClass *Factory_AircraftType;
+FactoryClass* GetPrimaryFactory(AbstractType absID, bool naval, BuildCat buildCat) const;  // 0x500510
+void          SetPrimaryFactory(FactoryClass*, AbstractType, bool naval, BuildCat);        // 0x500850
+void          Update_FactoriesQueues(AbstractType factoryOf, bool isNaval, BuildCat);      // 0x509140
 ```
 
-Five channels, serialized and pointer-invalidated with the house. The engine's own
-per-house update takes the matching key (✔ from Antares' hook at `0x509140`):
+---
+
+## 1. The one idea — the channel key
+
+```
+   channel = ( AbstractType , isNaval , BuildCat )
+```
+
+Vanilla instantiates six channels from this key:
+
+| AbstractType | isNaval | BuildCat | Tab | Antares ext slot |
+|---|---|---|---|---|
+| BuildingType | – | `DontCare` | 0 Buildings | `Factory_BuildingType` |
+| BuildingType | – | `Combat` | 1 Defense | *(shares the slot above)* |
+| InfantryType | – | – | 2 Infantry | `Factory_InfantryType` |
+| UnitType | false | – | 3 Vehicles | `Factory_VehicleType` |
+| UnitType | true | – | 3 Vehicles | `Factory_NavyType` |
+| AircraftType | – | – | 3 Vehicles | `Factory_AircraftType` |
+
+Three independent groupings, routinely conflated — **channel ≠ tab ≠ factory**:
+
+- **Naval is its own channel, sharing the vehicle tab.**
+- **Defenses are their own queue, sharing the ConYard.** Antares comments this at
+  `0x509140`; the vanilla test is `ObjectTypeClass::IsBuildCat5` @ `0x5004E0` (✔
+  `YRpp/ObjectTypeClass.h:45`) — literally "is this BuildCat 5 (Combat)?", i.e. the
+  Buildings-vs-Defense queue split is a **one-value comparison**.
+- **A channel names one factory building**, but the finished object may exit from a
+  different one (`FindAlternateKickout` `0x4444E2`).
+
+Everything the modder asked for is a modification of one field of this key, or of the
+mapping from the key to a tab.
+
+---
+
+## 2. Tab routing — the chokepoint
 
 ```cpp
-HouseClass::Update_FactoriesQueues(AbstractType factoryOf, bool isNaval, BuildCat buildCat)
+static int __fastcall GetObjectTabIdx(AbstractType abs, int idxType, int unused);        // 0x6ABC60
+static int __fastcall GetObjectTabIdx(AbstractType abs, BuildCat buildCat, bool isNaval);// 0x6ABCD0
+bool AddCameo(AbstractType absType, int idxType);                                        // 0x6A6300
 ```
+(✔ `YRpp/SidebarClass.h:88,103,107`.)
 
-> **Correction worth internalizing:** naval is a **separate channel** from vehicles
-> even though it shares the *vehicle tab*. Rev 1 said "naval folds into vehicles" —
-> true of the tab, false of the queue. Antares comments the analogous case at
-> `0x509140`: *"defenses live in their own queue, but share the building factory."*
-> **Channel ≠ tab ≠ factory building.** Three different groupings; conflating any
-> two is the classic bug in this subsystem.
+**The second overload takes the entire channel key and returns a tab index.** It is
+the single function that decides "which strip does this cameo live in", and it is the
+place every tab question below is answered.
 
-Each channel has four properties, and vanilla fixes all four. Each ask unfixes one:
+**All of `0x6ABC60`, `0x6ABCD0`, `0x6A6300`, `0x500510`, `0x500850`, `0x5004E0` are
+hooked by no framework in the registry** (✔) — Antares, Phobos, Kratos, Ares,
+AggressiveStance, CnCNet-Spawner all leave them alone. This is the cleanest ground in
+the whole design.
 
-| Vanilla assumption | Ask | Becomes | Already done? |
+> Phobos *does* hook tab-index sites, but a different set — `0x6A5F6E`, `0x6A614D`,
+> `0x6A633D`, `0x6ABC9D`, all in `src/Ext/SWType/Hooks.cpp`, i.e. superweapon routing
+> from the merged SW-sidebar work. It never touches the general `GetObjectTabIdx`.
+
+---
+
+## 3. Answers to the eight questions
+
+Difficulty is **relative to this codebase**, assuming P0's probe has run.
+
+| # | Question | Verdict | Difficulty |
 |---|---|---|---|
-| one **factory building** advances per channel | #3 | several may | ✔ **AI only**, via `AllowParallelAIQueues` |
-| one **item** (the front) advances per channel | #2, #3 | first N non-held | ✘ the real gap |
-| queued item **auto-completes** | #1 | may be **held** | ✘ new |
-| **exit** is category-implicit | #4 | explicit exit rule | ~ partly (§6) |
+| A | Several build queues for the same factory type | **Already exists** (Buildings + Defense share the ConYard). A *third* is §7. | — |
+| B | Two buildings at once *in one tab* | N fronts per channel. The core engine change. | **Hard** |
+| C | Third factory type: own queue, rests in either tab, doesn't consume Buildings/Defense | **Dormant `BuildCat` value.** | **Easiest big win** |
+| D | SW sidebar on the opposite side of screen | Layer on merged #1384's `SWSidebarClass`. | Medium |
+| E | Prerequisites gating exclusive-sidebar display | #1384 has a *boolean*; upgrade to a predicate. | Medium |
+| F | Buildings (not just SWs) in the exclusive sidebar | It's a parallel panel with its own item list. | Medium |
+| G | Same structure in **both** Buildings and Defense tab | `GetObjectTabIdx` returns *one* tab — needs multi-placement. | Medium-hard |
+| H | Per-placement policy: build both at once vs grey out | Same mechanism as B, scoped per placement. | **Hard** (needs B) |
+
+### C — the third factory type (do this first)
+
+The pattern already works: `[BLDG] BuildCat=Combat` puts a structure in the Defense
+tab with its own queue, still built by the ConYard. `BuildCat` is parsed as a normal
+INI field (`BuildingTypeClass::BuildCat`, `INI_READ(BuildCat, 0x475060)` ✔) and the
+Buildings-vs-Defense split is the single comparison at `IsBuildCat5` `0x5004E0`.
+
+So a third queue needs:
+1. **A channel slot** — Antares' `HouseExt` has five `BuildingClass*` fields; add one
+   per new BuildCat (or replace the five with a keyed map).
+2. **Tab routing** — `GetObjectTabIdx` `0x6ABCD0` returns the tab for the new BuildCat.
+   *"Rests in either tab"* is exactly this function's return value, so it is an INI
+   choice, not new code: `BuildCat.TabIndex=`.
+3. **The queue-update pass** — Antares already adds a second `Update_FactoriesQueues`
+   call for `Combat` at `0x509140`; a third BuildCat needs a third call, same shape.
+4. **Generalise the `IsBuildCat5` split** so "is this the defense queue" becomes "which
+   queue is this".
+
+The one genuine unknown ⚠: whether the vanilla queue machinery is *general* over
+`BuildCat` or contains more hardcoded `== 5` tests than `0x5004E0`. **Cheap to settle:**
+set `BuildCat=Power` on a test structure, run the P0 probe, and see whether it gets its
+own `FactoryClass` or silently falls into the `DontCare` queue. That one experiment
+decides whether C is a weekend or a month.
+
+### G — one structure in two tabs
+
+`AddCameo(absType, idxType)` adds a type to the strip that `GetObjectTabIdx` chooses,
+so a type currently has exactly one home. Two tabs needs:
+- **Multi-placement**: call `AddCameo` once per intended tab. Nothing structural
+  forbids it — a strip holds a cameo list, and the merged SW sidebar already shows the
+  same SW in both its panel and a normal tab. Precedent: PR #1387 gave SWs an explicit
+  `TabIndex=`, proving per-item tab assignment is overridable.
+- **Placement identity**: with a type in two strips, *"which placement did the player
+  click"* stops being derivable from the type alone. This is the real work, and it is
+  the same problem as H.
+- **Per-placement policy** (H): shared queue → clicking either builds one and greys the
+  other; independent → two fronts, which is B. So **H is not a separate feature; it is
+  B scoped to a placement.**
+- **Per-placement prerequisites** (country etc.): a predicate per placement, which is
+  exactly [[prerequisiteext-project]]'s Requirement primitive. **Don't build a second
+  prerequisite system here** — consume that one.
+
+### D/E/F — the exclusive sidebar
+
+PR **#1384** merged 2025-06-05 (`SWSidebarClass` / `SWColumnClass`, `ControlClass`-based).
+#1383 and #1379 are its closed predecessors. **#1379's closure is the binding design
+lesson: reviewers rejected a custom UI class and demanded `ControlClass`/`SelectClass`,
+and flagged missing scrolling.** Any new panel here must be `ControlClass`-derived and
+scrollable from day one.
+
+- **D** (opposite side): #1384 already has `SWSidebar.LeftOffset`; arbitrary placement
+  is an extension of existing positioning, not new machinery.
+- **E** (prereq-gated display): #1384 exposes a boolean `AllowInExclusiveSidebar`.
+  Replacing a boolean with a Requirement predicate is small — again, PrerequisiteExt.
+- **F** (buildings in it): the panel keeps its own item list, so the change is
+  broadening the item source from SW-only to any TechnoType, plus click routing into
+  the normal production path (`SidebarClass_ProcessCameoClick_*` `0x6AAEDF` / `0x6AAF9D`
+  / `0x6AB312`).
 
 ---
 
-## 2. The sync path is already decided by the engine
+## 4. Sync — already decided by the engine
 
-The single most useful thing the audit found. Antares' hook at `0x6AB773`
-(`SelectClass_ProcessInput_ProduceUnsuspended`, ✔ read) implements shift-click =
-queue five:
+Antares at `0x6AB773` implements shift-click-queues-five by adding the **same
+`EventClass` five times** to `Networking::AddEvent` (✔ read):
 
 ```cpp
-GET(EventClass* const, pEvent, EAX);
-GET_STACK(byte const, modifiers, 0xB8);
 auto count = 4 * (modifiers & 1) | 1;
 while(count--) { Networking::AddEvent(pEvent); }
 ```
 
-Three consequences, all binding on this design:
-
-- **Production commands are network events**, not local state writes. A hold toggle
-  must therefore be dispatched as an `EventClass` through `Networking::AddEvent`,
-  never a direct flip of a queue flag on the clicking client. That is the whole of
-  §C1's sync problem, already solved by the existing idiom — reuse it rather than
-  re-deriving it (the [[kratos-rng-desync-rootcause]] lesson: never let client-local
-  input steer synced state).
-- **Modifier-click is the established input idiom at this exact hook**, so #1's
-  toggle has an obvious home — but Antares already owns `0x6AB773`, so BuildQueueExt
-  must chain, not replace (§8).
-- `0x6AB773` and `0x6AB312` are hooked by **Antares only** (✔ registry) — no Phobos
-  or Kratos collision at these two addresses.
+Production input is a **network event**, never a local state write. Any hold toggle,
+multi-placement click, or new-panel button must dispatch through `EventClass::OutList`
+or it desyncs ([[kratos-rng-desync-rootcause]]). `modifiers & 1` is shift only, so other
+modifier bits are free. `0x6AB773` and `0x6AB312` are Antares-only.
 
 ---
 
-## 3. What #2/#3 actually need (the corrected gap)
+## 5. Ask #1 — queue hold
 
-Antares at `0x4502F4` (✔ read) restricts a house to one active factory per channel:
-
-```cpp
-if(H->Production && !RulesExt::Global()->AllowParallelAIQueues) { … return 0x4503CA; }
-```
-
-`AllowParallelAIQueues` defaults to **true** (✔ `src/Ext/Rules/Body.h:175`), and the
-guard is gated on `H->Production` — YRpp declares this as
-`bool Production; // AI production has begun.` (✔ `YRpp/HouseClass.h:823`), so it is
-the AI flag as suspected. *Corroborate in-game via the P0 probe (Q3) before P2 leans
-on it — a YRpp comment is good evidence, not proof.* So:
-
-- **"Use another idle war factory" is already solved** for AI, and the alternate-exit
-  search exists in vanilla/Antares regardless — `BuildingClass_KickOutUnit_FindAlternateKickout`
-  at `0x4444E2` (✔ Antares + Ares). #3 does **not** need to reimplement exit hand-off.
-- **The genuine gap is the per-item front:** one `FactoryClass` advances one object.
-  "Build 4 tanks at once" means *N fronts advancing in one channel*, which no
-  framework does. **That, and only that, is BuildQueueExt's #2/#3 contribution.**
-
-**Verified gap worth noting:** classic Ares documented per-category
-`ForbidParallelAIQueues.Infantry/.Vehicle/.Navy/.Aircraft/.Building` plus a
-per-TechnoType override (⚠ *search-sourced, not verified against Ares source*).
-**Antares implements only the global flag** — `grep ForbidParallel` over the Antares
-tree returns nothing (✔ verified). If those per-category tags matter, that is either
-an Antares parity gap to report upstream or a small, well-scoped BuildQueueExt
-feature. Worth confirming before building anything larger.
-
----
-
-## 4. Feature #1 — queue lock / hold (first deliverable)
-
-> **⚠ The hold primitive may already exist.** `FactoryClass` carries `OnHold`,
-> `IsSuspended`, and `IsManual` — YRpp documents the last as *"whether the current
-> suspension state was caused by the player"* — plus `Suspend(bool manual)`
-> `0x4C9E60` / `Unsuspend(bool manual)` `0x4C9EA0` (✔ `YRpp/FactoryClass.h`). That is
-> close to the semantics this section proposed to invent, and vanilla already
-> suspends production from the cameo (Antares' hook at `0x6AB773` is literally named
-> `…_ProduceUnsuspended`). **P0's probe exists to settle this before any code is
-> written here** (Q1/Q2). If confirmed, #1 shrinks from "build a hold system" to
-> "extend suspension to queued items + free the front + draw a glyph."
+> **⚠ The primitive may already exist.** `FactoryClass` carries `OnHold`, `IsSuspended`,
+> and `IsManual` — YRpp documents the last as *"whether the current suspension state was
+> caused by the player"* — plus `Suspend(bool manual)` `0x4C9E60` / `Unsuspend`
+> `0x4C9EA0` (✔ `YRpp/FactoryClass.h`). Vanilla already suspends from the cameo
+> (Antares' hook is named `…_ProduceUnsuspended`). **P0's probe settles this (Q1/Q2)
+> before any code is written here.** If confirmed, #1 shrinks to "extend suspension to
+> *queued* items + free the front + draw a glyph."
 >
-> None of `Suspend`/`Unsuspend`/`StartProduction`/`CompletedProduction` is hooked by
-> any framework in the registry (✔) — unclaimed ground.
+> None of `Suspend`/`Unsuspend`/`StartProduction`/`CompletedProduction` is hooked by any
+> framework (✔) — unclaimed.
 
-### Behavior
-- A queued item may be toggled **Held**: no progress, no credit drain. A
-  completed-but-held item stays parked (generalizing the building "ready" state).
-- Cameo shows a hold glyph. Concurrency (§3) advances the first N **non-held**
-  items, so hold and concurrency are orthogonal by construction.
-- Replaces the 99999 hack, which still drains credits, still occupies the single
-  front, and can't be un-held.
+INI: `Queue.Holdable=no`, `Queue.HoldWhenComplete=no` (both opt-in). Toggle = a modifier
+click at the `0x6AB773` idiom, dispatched as an `EventClass` (§4).
 
-### Control surface
-```ini
-[SOMETECHNO]
-Queue.Holdable=no          ; opt-in, default no → fully backward compatible
-Queue.HoldWhenComplete=no  ; park on completion instead of blocking the front
-```
-Toggle input: modifier-click at the `0x6AB773` idiom (§2), dispatched as an
-`EventClass`. **Which** modifier depends on what Antares leaves free — shift is
-taken by queue-5.
+---
 
-### Hook points
-| Purpose | Address | Status |
+## 6. Asks #2/#3 — concurrency
+
+Antares at `0x4502F4` restricts a house to one active factory per channel **only** when
+`H->Production && !AllowParallelAIQueues`. `AllowParallelAIQueues` defaults **true**, and
+`H->Production` is the AI flag (✔ `YRpp/HouseClass.h:823`: *"AI production has begun"*).
+
+So *"use another idle war factory / take turns exiting"* is **already solved** — vanilla
+plus `FindAlternateKickout` `0x4444E2`. **The only new work is N fronts advancing in one
+channel** (one `FactoryClass` advances one object). Per-house cap, building-raisable,
+recomputed on gain/loss, deterministic credit drain.
+
+`0x4502F4` and `0x4CA07A` are **three-way conflicts** (Antares + Ares + Phobos) — the
+live collision being Antares + Phobos. Treat as occupied.
+
+**Parity gap** (✔): Antares implements only the global `AllowParallelAIQueues`; the
+per-category `ForbidParallelAIQueues.*` attributed to classic Ares have no
+implementation (`grep` → nothing). ⚠ Whether classic Ares really has them is unverified.
+
+---
+
+## 7. Ask #4 — factory types, exit, output
+
+The factory-*type* half is **already Antares**: `Factory.ExplicitOnly=yes` + `BuiltAt=`
+(the Kennel pattern). Use `WeaponsFactory=`/`*Barracks=` (not `Factory=`) for walk-out.
+Do not reimplement.
+
+**⚠ Dead-code trap.** Antares fully replaces `ObjectTypeClass::FindFactory` at `0x5F7900`
+— its handler calls `HouseExt::HasFactory`, writes `EAX`, `return 0x5F7A89`, so the
+vanilla body **never runs**. Anything hooked inside is dead whenever Antares is loaded
+(same class as `CanBuild` `0x4F7870`). **Extend `HouseExt::HasFactory`.**
+
+New code, each layered on the vanilla search with fallback:
+- **Cross-category exit** `[TYPE] ExitFrom=<buildings>` — infantry ⇄ war factory. The
+  kick-out sites `0x444119`/`0x444131`/`0x44531F`/`0x443CCA` are **triple-hooked** and
+  **read the house from different registers** (`ESI->Owner`/`EAX`/`EAX`/`EDX`) — copying
+  a handler between them is a silent wrong-pointer bug.
+- **Output cell** — precedent: Phobos `BuildingClass_ExitObject_BarracksExitCell` `0x444B83`.
+- **SW-from-factory** — ⚠ largest unknown; dive the SW launch path first.
+
+---
+
+## 8. Sidebar prior art (merged SidebarExt)
+
+| PR | State | What |
 |---|---|---|
-| Skip accrual for held slots | `FactoryClass` update | ⚠ TBD |
-| Toggle dispatch (chain after Antares) | `0x6AB773` | ✔ exists, Antares-owned |
-| Cameo click resolution | `0x6AB312` | ✔ exists, Antares-owned |
-| Hold glyph | strip draw | → **SidebarExt boundary** (§7) |
+| **#1384** | **MERGED** 2025-06-05 | The real Exclusive SW Sidebar, `ControlClass`-based. The base. |
+| #1383 / #1379 | closed | Predecessors. #1379 rejected for a custom UI class + no scrolling. |
+| #1703/#1711/#1815 | merged | SWSidebar follow-ups: rectangular arrangement, duplicate SWs, tooltips |
+| **#1387** | merged | `[SOMESW] TabIndex=` — per-item tab assignment. Precedent for G. |
+| **#1435** | merged 2026-07-26 | `SetTabBySelectingFactory` + per-building `SetTabBySelecting` |
+| **#192** | merged 2021 | `CameoPriority=` sorting; sorts *within* hardcoded category groups |
+| #1522 | closed | Sidebar scroll-action change — unclaimed |
+
+**Phobos never touches the strip/tab/column structure.** Its `src/Ext/Sidebar/` is extra
+SHPs, producing-progress drawing, save/load, and the SW sidebar's *parallel* buttons
+outside the strip system. The 2-column grid, 4-tab cap, and button pool are unclaimed.
+Shared init contact points: `0x6A5082` (`InitClear`), `0x6A5839` (`InitIO`).
 
 ---
 
-## 5. Feature #2/#3 — N fronts per channel
+## 9. Sidebar engine structure (from SidebarExt's disassembly)
 
-- Per-house, per-channel concurrency cap `N`, default 1. Raisable by owning a
-  building: `[BLDG] BuildQueue.ConcurrencyBonus=2`, summed over owned buildings,
-  clamped by a rules max. Recompute on building gain/loss (power-like).
-- Channel advances the first N non-held items; each accrues and drains
-  independently and **deterministically** (§2 — synced state).
-- Finished fronts eject through the **existing** kick-out / alternate-kickout path
-  (§3). Do not rewrite it.
-- Buildings channel: layer on Phobos `BuildingProductionQueue` (§8), and keep
-  "next building can't start until the current is *placed*" unless deliberately
-  relaxed.
+`SidebarClass::Instance` @ `0x87F7E8`. `Tabs[4]` at instance offset `0x1544`,
+`sizeof(StripClass) = 0xF94`; cross-check `0x1544 + 4*0xF94 = 0x5394` = YRpp's
+`unknown_5394` ✔. 75-cameo cap per strip (`push $0x4b` @ `0x6A4E88`, `0x6A4FBB`).
 
-`0x4502F4` (the channel-restriction site) is a **three-way conflict** — Antares,
-Ares, *and* Phobos all hook it (✔ `conflicts.md`). Same for `0x4CA07A`
-(`FactoryClass_AbandonProduction`). Treat both as occupied territory.
+| Global | Value | Meaning |
+|---|---|---|
+| `0x886F94` | 158 | sidebar width |
+| `0xB0B4FC` | 63 GDI / 64 NOD | column pitch |
+| `0xB0B500` | 50 | row pitch (Phobos re-forces @ `0x6A51E9`) |
+| `0xB0B4F8` | 227 GDI | strip top Y |
 
----
+**The engine already has a column-count switch**: every column site is a two-way branch
+on `CurrentPlayer == Observer` (observer 1 column, else 2) — explicit at `0x6A8BAF`/
+`0x6A8BC2`. Build on that seam with one `GetColumnCount()` rather than 17 byte patches.
 
-## 6. Feature #4 — factory types, exit, output
+### ⚠ The button-pool overflow trap — inherited by any cameo feature
 
-**The factory-*type* half is already done by Antares** — `Factory.ExplicitOnly=yes`
-+ `BuiltAt=` (the documented "Kennel" pattern). Do not reimplement. Use
-`WeaponsFactory=`/`*Barracks=` (not `Factory=`) for correct walk-out.
+Pool @ `0xB07E80`, stride `0x38`, **60 per tab**, 240 total, ending `0xB0B300`.
+**`ToggleRepairButton` sits at `0xB0B3A0`** — under 3 slots of slack. Row count
+`(H-260)/50` is **never clamped**.
 
-**⚠ Dead-code trap — the most important hook finding for #4.** Antares replaces
-`ObjectTypeClass::FindFactory` **wholesale** at `0x5F7900` (✔ read): its handler
-calls `HouseExt::HasFactory(...)`, writes `EAX`, and `return 0x5F7A89` — jumping to
-the epilogue so **the entire vanilla body never runs**. Anything hooked *inside*
-that body is dead code whenever Antares is loaded. This is the same trap the
-Encyclopedia already documents for `HouseClass::CanBuild` at `0x4F7870`.
-→ **#4 must extend `HouseExt::HasFactory` / chain at the epilogue, not hook vanilla
-factory-selection.**
+| Columns | Overflows at | Screen height |
+|---|---|---|
+| 2 (vanilla) | rows ≥ 31 | ≥ 1810 px — **vanilla is already broken at 4K** |
+| 3 | rows ≥ 21 | ≥ 1310 px — **breaks at 1440p** |
 
-New code, each layered *on top of* the vanilla search (fall back, never replace):
+Failure is silent before it is loud: tabs bleed into each other's buttons, *then* the
+repair toggle dies. **Relocate the pool to a heap array before touching columns.** Same
+bug class as [[mapsizeext-astar-pool-overflow]]. Any BuildQueueExt feature that adds
+cameos or buttons — including G's multi-placement — inherits this.
 
-- **Cross-category exit** — `[TYPE] ExitFrom=<building list>`: eject from those
-  buildings even if they aren't the category's factory (infantry ⇄ war factory).
-  The per-category kick-out sites `0x444119` (Unit), `0x444131` (Infantry),
-  `0x44531F` (Building), `0x443CCA` (Aircraft) are all **triple-hooked**
-  (Antares + Ares + Phobos) (✔ registry) — the busiest cluster in this design.
-- **Output cell** — per-factory rally/exit override. Phobos already has
-  `BuildingClass_ExitObject_BarracksExitCell` at `0x444B83` (✔ registry): precedent,
-  and a coexistence question.
-- **SW-from-factory** — ⚠ largest unknown; dive the SW launch path before scoping.
-  May reduce to a thin bridge to the existing SW system.
+Census: `Tabs[]` 26 sites, button pool 27, `TabButtons` 30 (~83 total, all within
+`0x6A4C00`–`0x6AC800`). ⚠ The per-tab stride is encoded three ways (`imul $0x3c`,
+factored, and folded as `add $0xd20`) — re-derive by data-flow, not grep.
 
 ---
 
-## 7. UI boundary: BuildQueueExt vs SidebarExt
+## 10. Phasing
 
-Revision 1 declared "no new sidebar tab" as a permanent non-goal on the grounds
-that the 0–3 cap was effectively immovable. **That reasoning was wrong** (§0.3):
-SidebarExt found the caps are arithmetic, and is already scoping >4 tabs with
-custom icons, a 3-column grid, and floating cameo panels.
+1. **P0 — probe** *(written, needs a CI build + game run)*. Answers Q1–Q4.
+2. **P1 — the BuildCat experiment.** Set `BuildCat=Power` on a test structure, watch the
+   probe. One afternoon; decides C's cost and unblocks the highest-value ask.
+3. **P2 — ask C: third factory type.** New channel slot + `GetObjectTabIdx` routing +
+   the extra `Update_FactoriesQueues` pass + generalising `IsBuildCat5`.
+4. **P3 — ask #1 hold** (if the probe says it isn't already free).
+5. **P4 — asks G/H: multi-placement + per-placement policy.** Needs P5 for the pool.
+6. **P5 — sidebar structure: pool relocation → 3 columns → N tabs.** Pool relocation is
+   a prerequisite for anything that adds cameos, and fixes vanilla's 4K bug as a
+   side effect.
+7. **P6 — asks B/#2/#3: N fronts.** The hard engine change and the main sync surface.
+8. **P7 — asks D/E/F: exclusive-sidebar extensions**, layered on #1384.
+9. **P8 — ask #4 exit/output**, then SW-from-factory last.
 
-The correct split is by **layer, not by feasibility**:
-
-| Layer | Owner |
-|---|---|
-| Queue state, hold flags, concurrency, exit routing, INI tags | **BuildQueueExt** |
-| Strips, tabs, columns, button pool, cameo pixels, glyph drawing | **SidebarExt** |
-
-So #1's hold glyph is *specified* here and *rendered* there. If both DLLs ship,
-BuildQueueExt should expose the hold state and let SidebarExt draw it; if only
-BuildQueueExt ships, it draws a minimal glyph at the strip-draw site and cedes that
-hook the moment SidebarExt lands.
-
-> **Inherited constraint from SidebarExt's audit:** the `SelectClass` button pool at
-> `0xB07E80` is a fixed 240 entries (60/tab, stride `0x38`) and the row count
-> `(H-260)/50` is never clamped — it silently corrupts adjacent tabs and then the
-> repair/sell toggles at high resolutions. **Any BuildQueueExt feature that adds
-> cameos or buttons inherits this overflow trap.** Same bug class as
-> [[mapsizeext-astar-pool-overflow]]. Don't add sidebar buttons without reading
-> SidebarExt's `DESIGN.md` first.
-
-Also relevant: PR **#1384** (Exclusive SuperWeapon Sidebar) **merged 2025-06-05**;
-**#1383** and **#1379** are its *closed predecessors* (✔ verified via `gh`). #1379
-died because reviewers demanded `ControlClass`/`SelectClass` reuse instead of a
-custom UI class, and flagged missing scrolling — **treat that as the binding design
-constraint for any new sidebar UI element in either DLL.** Phobos's SW-sidebar work
-is also what hooks the tab-index sites (`0x6A5F6E`, `0x6A614D`, `0x6A633D`,
-`0x6ABC9D` — all in `src/Ext/SWType/Hooks.cpp`, ✔ registry), so tab-index territory
-is Phobos-adjacent, not virgin.
-
----
-
-## 8. Coexistence — the dominant risk
-
-Ranked by how occupied the ground is:
-
-| Site | Address | Occupants | Note |
-|---|---|---|---|
-| Channel restriction | `0x4502F4` | Antares + Ares + Phobos | ✔ real 3-way conflict |
-| Abandon production | `0x4CA07A` | Antares + Ares + Phobos | ✔ real 3-way conflict |
-| Kick-out (4 categories) | `0x444119/444131/44531F/443CCA` | Antares + Ares + Phobos | ✔ triple-hooked |
-| FindFactory | `0x5F7900` | Antares (**full replacement**) | ✔ dead-code trap |
-| ShouldDisableCameo | `0x50B370` | Antares + Ares (full replacement) | ✔ |
-| Cameo click / input | `0x6AB312`, `0x6AB773` | Antares only | ✔ clearest ground |
-| Strip draw (de-hardcoded) | `0x6A9C54`, `0x6AA88D` | Phobos `…FindFactoryDehardCode` | ✔ Phobos already de-hardcoding factory lookup in the strip |
-
-Rules: **chain after / layer on; never replace.** Antares and Phobos mostly divide
-the strip region by hooking *different* addresses — only `0x6A99F3` collides there
-(✔ `conflicts.md`) — so the free space is narrow but real. Antares carries ~1483
-release hooks, 73 of them strip/sidebar/cameo.
-
----
-
-## 9. Phasing
-
-1. **P1 — #1 hold.** Per-slot flag, skip accrual, `EventClass` toggle chained after
-   Antares at `0x6AB773`, INI opt-in. Smallest, and settles the UI boundary (§7)
-   and the event idiom (§2) that everything later depends on.
-2. **P2 — #2/#3 N fronts.** The core engine change and the main sync surface. Reuse
-   kick-out/alternate-kickout for hand-off (§3). Layer on Phobos for the buildings
-   channel.
-3. **P3 — #4 exit/output.** `ExitFrom=` + output cell, via `HouseExt::HasFactory`
-   (not vanilla FindFactory — §6).
-4. **P4 — #4 SW-from-factory.** Only after the SW path is dived.
-5. **Possible P0 —** the `ForbidParallelAIQueues.*` parity gap (§3), if confirmed:
-   small, self-contained, and may belong upstream in Antares instead.
-6. **(not ours)** Tabs/columns/glyph rendering → SidebarExt.
-
----
-
-## 10. Encyclopedia debt
-
-Per [[hook-encyclopedia-workflow]], this design consumed the registry and owes a
-page back. There is **no production/factory page** in `encyclopedia/` today.
-→ Contributing `encyclopedia/Production-Queues-Factories.md` covering the channel
-table, `0x4502F4`, `0x4CA07A`, `0x5F7900` (the replacement trap), the kick-out
-cluster, and the `EventClass` production-command path.
-*(SidebarExt separately owes `Sidebar-Strips-Tabs.md` — don't duplicate it here.)*
+Prerequisite predicates throughout are consumed from [[prerequisiteext-project]], not
+rebuilt.
 
 ---
 
 ## 11. Open decisions
 
-1. **Name** — `BuildQueueExt` vs `ProductionExt` (scope is really production).
-2. **`H->Production` semantics** (§3) — ⚠ must be verified before P2.
-3. **`ForbidParallelAIQueues.*`** — Antares parity gap or BuildQueueExt feature?
-   And is it real in classic Ares at all (⚠ unverified)?
-4. **Hold modifier key** — shift is taken by queue-5; which is free?
-5. **Concurrency cap shape** — flat per-house vs per-category
-   (`ConcurrencyBonus.Vehicles=`), noting naval is its own channel (§1).
-6. **UI split** (§7) — does BuildQueueExt draw a minimal glyph standalone, or hard-
-   depend on SidebarExt?
+1. **Name.** Scope is now production + sidebar; `BuildQueueExt` undersells it.
+   `ProductionExt`? `SidebarExt`? Repo currently `BuildQueueExt` with code + submodules,
+   so renaming costs a repo move.
+2. **Is the queue machinery general over `BuildCat`?** ⚠ The one unknown gating C.
+   Settled by P1's experiment.
+3. **Placement identity** for G/H — index into a per-house placement list vs a synthetic
+   key. Determines the `EventClass` payload.
+4. **Hold modifier key** — shift is taken by queue-5.
+5. **Channel storage** — extend Antares' five fields, or replace with a map keyed by the
+   `(AbstractType, isNaval, BuildCat)` tuple? The tuple is the honest model.
+6. **Concurrency cap shape** — flat per-house vs per-category, noting naval is its own
+   channel.
