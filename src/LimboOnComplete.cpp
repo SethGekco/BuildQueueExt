@@ -14,7 +14,8 @@ void LimboOnComplete::ReadConfig(CCINIClass* pINI)
 
 	Types.clear();
 
-	for (auto const pType : *BuildingTypeClass::Array)
+	// BuildingTypeClass::Array is a reference, not a pointer — no indirection.
+	for (auto const pType : BuildingTypeClass::Array)
 	{
 		if (!pType)
 			continue;
