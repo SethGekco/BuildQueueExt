@@ -30,6 +30,7 @@
     <ClCompile Include="Phobos\src\Utilities\Patch.cpp" />
     <!-- P0: production probe -->
     <ClCompile Include="src\ProductionProbe.cpp" />
+    <ClCompile Include="src\LimboOnComplete.cpp" />
     <ClCompile Include="src\Hooks.ProductionProbe.cpp" />
   </ItemGroup>
 
@@ -37,6 +38,7 @@
   <ItemGroup>
     <ClInclude Include="src\BuildQueueExt.h" />
     <ClInclude Include="src\ProductionProbe.h" />
+    <ClInclude Include="src\LimboOnComplete.h" />
   </ItemGroup>
 
   <PropertyGroup Label="Globals">

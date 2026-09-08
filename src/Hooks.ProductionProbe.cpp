@@ -1,4 +1,5 @@
 #include "ProductionProbe.h"
+#include "LimboOnComplete.h"
 
 #include <FactoryClass.h>
 #include <HouseClass.h>
@@ -28,11 +29,16 @@
 // ---------------------------------------------------------------------------
 // Config
 
-DEFINE_HOOK(0x668BF0, BQExt_RulesClass_Addition_ReadProbeConfig, 0x5)
+// Both config readers share this one hook rather than each taking their own
+// DEFINE_HOOK at 0x668BF0. Syringe would chain two same-address handlers fine,
+// but co-locating them keeps the order explicit and keeps the address appearing
+// once in the hook-bounds check.
+DEFINE_HOOK(0x668BF0, BQExt_RulesClass_Addition_ReadConfig, 0x5)
 {
 	GET_STACK(CCINIClass*, pINI, 0x4);
 
 	ProductionProbe::ReadConfig(pINI);
+	LimboOnComplete::ReadConfig(pINI);
 
 	return 0;
 }
@@ -98,11 +104,28 @@ DEFINE_HOOK(0x4CA5A0, BQExt_FactoryClass_StartProduction, 0x7)
 // if done". Pairs with StartProduction to bracket one item's lifetime, and
 // shows whether a finished item parks (IsSuspended) or blocks.
 
+// This one hook does two things, and the ORDER IS LOAD-BEARING: the probe must
+// log the factory while it still holds the finished item, because the limbo
+// delivery below abandons that production. Two separate DEFINE_HOOKs at this
+// address would chain in unspecified order and the log would sometimes show an
+// already-emptied factory.
+//
+// LimboOnComplete is why the delivery sits at *completion* rather than at the
+// cameo click: entering placement mode is client-local state, but creating a
+// BuildingClass is synced state, so a click-driven creation would desync.
+// Factory completion is already lockstep-deterministic — the same factory
+// finishes on the same frame on every client — so delivering here needs no new
+// network event. See DESIGN.md §7b.
 DEFINE_HOOK(0x4CA1A0, BQExt_FactoryClass_CompletedProduction, 0x5)
 {
 	GET(FactoryClass*, pThis, ECX);
 
 	ProductionProbe::Report("CompletedProduction", pThis);
+
+	// Self-limiting: TryDeliver abandons the production it consumes, so this
+	// cannot re-fire for the same item on the next update. No-op unless the
+	// finished type is flagged LimboOnComplete=yes.
+	LimboOnComplete::TryDeliver(pThis);
 
 	return 0;
 }
