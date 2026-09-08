@@ -265,6 +265,61 @@ New code, each layered on the vanilla search with fallback:
 
 ---
 
+## 7b. Ask #9 — "click a finished building → straight to limbo, no placement"
+
+Feasible. Both halves exist; the hard part is neither of them.
+
+**The payload already exists, in Phobos.** `LimboCreate` (`src/Ext/SWType/FireSuperWeapon.cpp:79`)
+is the canonical routine for a building that *fully counts* but is never placed:
+
+```cpp
+pBuilding->InLimbo = false;  pBuilding->IsAlive = true;  pBuilding->IsOnMap = true;
+pBuilding->DiscoveredBy(pOwner);
+pOwner->RegisterGain(pBuilding, false);
+pOwner->RecheckTechTree = true;  pOwner->RecheckPower = true;
+pOwner->Buildings.AddItem(pBuilding);
+if (pType->ConstructionYard) pOwner->ConYards.AddItem(pBuilding);
+if (pType->SecretLab)        pOwner->SecretLabs.AddItem(pBuilding);
+if (pType->FactoryPlant)   { pOwner->FactoryPlants.AddItem(pBuilding); pOwner->CalculateCostMultipliers(); }
+```
+
+> **⚠ Naming trap:** it sets `InLimbo = **false**`. Phobos "LimboDelivery" does not mean
+> `InLimbo`; it means *registered with the house, absent from the map*. It grants
+> prerequisites, power, superweapons, FactoryPlant discounts and ConYard status while
+> occupying no cells. Comments confirm `BuildingClass::Place` is already called inside
+> `DiscoveredBy`, which is what books Ore Purifier / self-heal counters.
+
+**The trigger point.** Placement mode is `DisplayClass::CurrentBuilding` /
+`CurrentBuildingType` ("Building we're currently placing", ✔ `YRpp/DisplayClass.h:108`),
+set from the completed-building cameo click inside `SelectClass::Action`
+(`~0x6AB600`–`0x6AB800`). The completed/ready state is `FactoryClass::IsSuspended` with
+`Object` set. Confirmed nearby landmarks in that function (✔ disassembled):
+`0x6AB619 → GetPrimaryFactory(0x500510)`, `0x6AB656 → ShouldDisableCameo(0x50B370)`,
+and at `0x6AB67F` a `cmp $0x7,%ebp` (BuildingType) guarding the vanilla
+"one building at a time" rejection at `0x6AB689` — the site Phobos skips to `0x6AB6CE`
+for `BuildingProductionQueue`.
+
+**⚠ The actual hard part: this is synced state reached from a local input.**
+Entering placement mode is *client-local* (`CurrentBuilding` is UI state); the building
+only becomes real when placement emits a network event. Limbo-delivery has no cell and
+no placement step, so it would create a `BuildingClass` **directly** — and per §4 that
+must travel as an `EventClass`, or clients diverge and the game desyncs.
+
+Phobos solves exactly this with **`EventExt`** (`src/Ext/Event/Body.h`): a custom network
+event carrying a `DataBuffer`, with `AddEvent()` / `RespondEvent()` and an interop export
+`EventExt_AddEvent`. That is the correct transport, but calling a co-loaded framework's
+private event machinery from this DLL is fragile — needs its own decision (§11.7).
+
+**Gameplay consequence worth deciding before coding:** a limbo-delivered building is
+invisible, unselectable, unsellable and undestroyable. Phobos can only remove one via
+`LimboKill` by explicit ID. So "straight to limbo" means **permanent and irreversible**,
+not "stored for later placement."
+
+Phasing: this is P4-class (placement identity / policy), and it should be INI-opt-in
+per BuildingType, never global default.
+
+---
+
 ## 8. Sidebar prior art (merged SidebarExt)
 
 | PR | State | What |
