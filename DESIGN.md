@@ -31,20 +31,38 @@ Addresses ✔ (confirmed) / ⚠ (unverified), per `SpawnExt/DESIGN.md` conventio
 channel already exists in Antares; parallel factories already ship for the AI; the
 4-tab cap is arithmetic, not a wall.
 
-**Rev 3** (this one) merges SidebarExt and adds the finding that reframes ask #4:
+**Rev 3** merges SidebarExt and reframes ask #4 around `BuildCat`.
 
-> **`BuildCat` is a six-value enum and vanilla only uses two of them.**
-> ```cpp
-> enum class BuildCat : unsigned int {
->     DontCare = 0, Tech = 1, Resoure = 2,      // [sic] engine's own typo
->     Power = 3, Infrastructure = 4, Combat = 5
-> };
-> ```
-> (✔ `YRpp/GeneralDefinitions.h:644`.) Vanilla instantiates `DontCare` (Buildings tab)
-> and `Combat` (Defense tab). **`Tech`, `Resoure`, `Power`, `Infrastructure` are
-> dormant.** A "third factory type that shares the ConYard but has its own queue" is
-> not a new mechanism — it is the *defense tab pattern*, which already works, using an
-> enum slot that already exists.
+**Rev 3a (correction).** Rev 3 claimed the non-`Combat` `BuildCat` values were
+*dormant* and that a third queue was therefore nearly free. **That was wrong**, caught
+by grepping a real `rulesmd.ini` instead of reasoning from the enum:
+
+```
+36  BuildCat=Combat      23  BuildCat=Tech      6  BuildCat=Resource      5  BuildCat=Power
+```
+
+The values are **populated and in active use** (barracks, war factories, tech centres
+all carry `BuildCat=Tech`). What they drive is **AI base-planning priority**, not queue
+separation. The queue/tab split is a *single hardcoded test* —
+`ObjectTypeClass::IsBuildCat5` `0x5004E0`, literally "is this BuildCat 5 (Combat)?" —
+which is why Antares adds exactly one extra pass, `Update_FactoriesQueues(BuildingType,
+isNaval, Combat)`, at `0x509140`.
+
+> **Corrected statement.** `BuildCat` is six-valued and four values are live, but
+> **only `Combat` creates a separate queue.** A third factory type is therefore *not*
+> free: it needs a channel slot, a generalised `IsBuildCat5`, tab routing, and an extra
+> update pass (§7 lists these). Still the most tractable of the big asks — but moderate
+> work, not a config change. Difficulty in §3 revised accordingly.
+
+The original enum, for reference (✔ `YRpp/GeneralDefinitions.h:644`):
+```cpp
+enum class BuildCat : unsigned int {
+    DontCare = 0, Tech = 1, Resoure = 2,      // [sic] engine's own typo
+    Power = 3, Infrastructure = 4, Combat = 5
+};
+```
+⚠ Note the enum spells it `Resoure` while INIs spell it `Resource` — worth confirming
+which string the parser at `0x475060` actually accepts before relying on either.
 
 Rev 3 also corrects the rev-2 framing of the channel key. It is not a 5-slot table;
 it is a **3-tuple**, and the engine says so itself (✔ `YRpp/HouseClass.h:689,692`):
@@ -121,7 +139,7 @@ Difficulty is **relative to this codebase**, assuming P0's probe has run.
 |---|---|---|---|
 | A | Several build queues for the same factory type | **Already exists** (Buildings + Defense share the ConYard). A *third* is §7. | — |
 | B | Two buildings at once *in one tab* | N fronts per channel. The core engine change. | **Hard** |
-| C | Third factory type: own queue, rests in either tab, doesn't consume Buildings/Defense | **Dormant `BuildCat` value.** | **Easiest big win** |
+| C | Third factory type: own queue, rests in either tab, doesn't consume Buildings/Defense | Generalise the single `IsBuildCat5` split (§0 rev 3a — *not* a dormant enum slot) | **Moderate; most tractable big ask** |
 | D | SW sidebar on the opposite side of screen | Layer on merged #1384's `SWSidebarClass`. | Medium |
 | E | Prerequisites gating exclusive-sidebar display | #1384 has a *boolean*; upgrade to a predicate. | Medium |
 | F | Buildings (not just SWs) in the exclusive sidebar | It's a parallel panel with its own item list. | Medium |
@@ -135,6 +153,10 @@ tab with its own queue, still built by the ConYard. `BuildCat` is parsed as a no
 INI field (`BuildingTypeClass::BuildCat`, `INI_READ(BuildCat, 0x475060)` ✔) and the
 Buildings-vs-Defense split is the single comparison at `IsBuildCat5` `0x5004E0`.
 
+**But setting some other `BuildCat` does not by itself make a queue** — see §0 rev 3a.
+`Tech`/`Resource`/`Power` are already in use for AI base planning and all share the
+Buildings queue. The work below is what actually creates a third one.
+
 So a third queue needs:
 1. **A channel slot** — Antares' `HouseExt` has five `BuildingClass*` fields; add one
    per new BuildCat (or replace the five with a keyed map).
@@ -146,11 +168,11 @@ So a third queue needs:
 4. **Generalise the `IsBuildCat5` split** so "is this the defense queue" becomes "which
    queue is this".
 
-The one genuine unknown ⚠: whether the vanilla queue machinery is *general* over
-`BuildCat` or contains more hardcoded `== 5` tests than `0x5004E0`. **Cheap to settle:**
-set `BuildCat=Power` on a test structure, run the P0 probe, and see whether it gets its
-own `FactoryClass` or silently falls into the `DontCare` queue. That one experiment
-decides whether C is a weekend or a month.
+The one genuine unknown ⚠: how many hardcoded `== 5` tests exist besides `0x5004E0`,
+i.e. how many sites need generalising. **Cheap to settle:** the armed test flips GAPILL
+from `BuildCat=Combat` to `BuildCat=Power` and watches the P0 probe. Expected under rev
+3a: GAPILL leaves the Defense tab and joins the Buildings queue. If instead it gets its
+own `FactoryClass`, rev 3a is too pessimistic and C gets cheaper again.
 
 ### G — one structure in two tabs
 
