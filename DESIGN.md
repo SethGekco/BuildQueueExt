@@ -42,27 +42,48 @@ by grepping a real `rulesmd.ini` instead of reasoning from the enum:
 ```
 
 The values are **populated and in active use** (barracks, war factories, tech centres
-all carry `BuildCat=Tech`). What they drive is **AI base-planning priority**, not queue
-separation. The queue/tab split is a *single hardcoded test* —
+all carry `BuildCat=Tech`). The tab/queue split is a *single hardcoded test* —
 `ObjectTypeClass::IsBuildCat5` `0x5004E0`, literally "is this BuildCat 5 (Combat)?" —
 which is why Antares adds exactly one extra pass, `Update_FactoriesQueues(BuildingType,
 isNaval, Combat)`, at `0x509140`.
 
-> **Corrected statement.** `BuildCat` is six-valued and four values are live, but
-> **only `Combat` creates a separate queue.** A third factory type is therefore *not*
-> free: it needs a channel slot, a generalised `IsBuildCat5`, tab routing, and an extra
-> update pass (§7 lists these). Still the most tractable of the big asks — but moderate
-> work, not a config change. Difficulty in §3 revised accordingly.
+**✅ CONFIRMED IN-GAME (2026-09-08).** GAPILL flipped from `BuildCat=Combat` to
+`BuildCat=Power` **moved from the Defense tab to the Buildings tab**, exactly as rev 3a
+predicted. ModEnc agrees: *"BuildCat=Combat makes the structure buildable from the
+defense tab; all other options keep the building on the main structure tab."*
 
-The original enum, for reference (✔ `YRpp/GeneralDefinitions.h:644`):
-```cpp
-enum class BuildCat : unsigned int {
-    DontCare = 0, Tech = 1, Resoure = 2,      // [sic] engine's own typo
-    Power = 3, Infrastructure = 4, Combat = 5
-};
-```
-⚠ Note the enum spells it `Resoure` while INIs spell it `Resource` — worth confirming
-which string the parser at `0x475060` actually accepts before relying on either.
+**Rev 3b — a second correction.** Rev 3a asserted the non-`Combat` values drive
+**AI base-planning priority**. That was another unearned inference; there is no evidence
+for it. Neither Antares nor Phobos reads `BuildCat` for anything but sidebar/factory
+lookup, and ModEnc describes it as sidebar placement only. Withdrawn.
+
+What the frameworks actually do with it (✔ source-read):
+
+- **The queue key is effectively binary.** Every framework call site passes literal
+  `BuildCat::DontCare` for non-defense buildings — Antares `Ext/Building/Body.cpp:68`,
+  `Ext/House/Hooks.Queue.cpp:125`, `Ext/Rules/Hooks.CameoList.cpp:59`,
+  `Ext/Building/Hooks.Infiltrate.cpp:110`; Phobos `Ext/Sidebar/Hooks.cpp:53-61`. Phobos
+  even comments it: *"Vanilla and Ares all only hardcoded to find factory with
+  BuildCat::DontCare…"* So `Tech`/`Resource`/`Power`/`Infrastructure` are looked up **as
+  `DontCare`** and share its queue.
+- **`DontCare` is a sentinel for "unset", and Antares rewrites it.**
+  `Misc/Invalidators.cpp:191-201`: any BuildingType within TechLevel carrying
+  `DontCare` is reassigned to `Combat` (if `SuperWeapon != -1 || IsBaseDefense || Wall`)
+  else **`Infrastructure`**, with a parser warning. So under Antares `Infrastructure` is
+  *the* default for ordinary buildings — ModEnc's "no vanilla building uses
+  Infrastructure" is true of vanilla only. This also explains ModEnc's note that
+  `DontCare` renders the cameo "as if the building was partly built".
+
+> **Net for ask C.** A new `BuildCat` would be **silently normalised into the `DontCare`
+> queue** by every one of those hardcoded call sites. Creating a genuine third queue
+> means updating that enumerable site list *plus* generalising `IsBuildCat5` and the tab
+> routing. Moderate and well-bounded — but a code change at ~8 known sites, not a config
+> change. §3 difficulty stands.
+
+Accepted INI spellings (ModEnc): `Combat`, `Infrastructure`, `Resource`, `Power`,
+`Tech`, `DontCare`. The YRpp *enum identifier* is misspelled `Resoure`
+(✔ `YRpp/GeneralDefinitions.h:644`) — a C++ identifier typo only; the INI string is
+`Resource`, which resolves the rev-3a ⚠.
 
 Rev 3 also corrects the rev-2 framing of the channel key. It is not a 5-slot table;
 it is a **3-tuple**, and the engine says so itself (✔ `YRpp/HouseClass.h:689,692`):
@@ -168,11 +189,11 @@ So a third queue needs:
 4. **Generalise the `IsBuildCat5` split** so "is this the defense queue" becomes "which
    queue is this".
 
-The one genuine unknown ⚠: how many hardcoded `== 5` tests exist besides `0x5004E0`,
-i.e. how many sites need generalising. **Cheap to settle:** the armed test flips GAPILL
-from `BuildCat=Combat` to `BuildCat=Power` and watches the P0 probe. Expected under rev
-3a: GAPILL leaves the Defense tab and joins the Buildings queue. If instead it gets its
-own `FactoryClass`, rev 3a is too pessimistic and C gets cheaper again.
+**✅ Settled in-game (2026-09-08).** GAPILL at `BuildCat=Power` moved to the Buildings
+tab and shares its queue — only `Combat` is special. The remaining work is the
+enumerable call-site list in §0 rev 3b: ~8 hardcoded `GetPrimaryFactory(…, DontCare)`
+sites across Antares and Phobos, plus `IsBuildCat5` `0x5004E0` and the tab routing at
+`GetObjectTabIdx` `0x6ABCD0`.
 
 ### G — one structure in two tabs
 
