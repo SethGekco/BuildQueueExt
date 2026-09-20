@@ -433,18 +433,37 @@ Primary_Unused1;      Primary_Unused2;      Primary_Unused3;   // <- wedged here
 Primary_ForDefenses;
 ```
 
-Two things worth noting. Defenses have their **own named slot**, so the
-Buildings/Defense split does not consume a spare. And the three spare slots sit
-**between** Buildings and Defenses rather than at the end — the shape of an
-enum-indexed table with unused indices, not trailing padding. That is suggestive that
-the engine's index math can address them, but **suggestive is not verified**:
-"Unused" is YRpp's *label*, and a field name taken at face value has already been wrong
-twice in this project (§0). Probe question **Q5** exists to settle it — dump all nine
-per house, see which slot each real factory lands in, and whether any `Unused` ever
-goes non-null.
+**✅ Q5 ANSWERED 2026-09-19 — and the answer is no.** Settled by disassembling both
+accessors rather than waiting for a game run. Each dispatches through a 40-entry byte
+table indexed by `AbstractType - 1` into a **five-case** jump table, and the verified
+slot map is:
 
-Either way §7c means the spare slots are at best a convenience for a couple of fixed
-new categories; they cannot serve `Mode=Queue`.
+| offset | field | selected when |
+|---|---|---|
+| `0x53AC` | `Primary_ForAircraft` | `AircraftType` |
+| `0x53B0` | `Primary_ForInfantry` | `InfantryType` |
+| `0x53B4` | `Primary_ForVehicles` | `UnitType`, naval = false |
+| `0x53B8` | `Primary_ForShips` | `UnitType`, naval = true |
+| `0x53BC` | `Primary_ForBuildings` | `BuildingType`, cat ≠ `Combat` |
+| `0x53C0`–`0x53C8` | `Primary_Unused1/2/3` | **never read, never written** |
+| `0x53CC` | `Primary_ForDefenses` | `BuildingType`, cat == `Combat` |
+
+No case in either jump table touches `0x53C0`/`0x53C4`/`0x53C8`. **The three spare slots
+are structurally unreachable through the engine's own accessors** — dead storage, not
+spare capacity. Their suggestive mid-array position meant nothing. They buy nothing over
+our own table, so nothing should plan around them.
+
+Calling conventions (✔ both):
+```
+GetPrimaryFactory 0x500510  __thiscall, ret 0x0C
+  ECX = HouseClass*, [ESP+4] = AbstractType, [ESP+8] = bool naval,
+  [ESP+0xC] = BuildCat  → EAX = FactoryClass*
+SetPrimaryFactory 0x500850  __thiscall, ret 0x10
+  ECX = HouseClass*, [ESP+4] = FactoryClass*, [ESP+8] = AbstractType,
+  [ESP+0xC] = bool naval, [ESP+0x10] = BuildCat
+```
+Stolen bytes at both: `mov`+`dec` = exactly 5, ending on a real instruction boundary,
+no relative branch — so `return 0` is safe at these two sites specifically.
 
 **`BuildingClass::Factory` (✔ `YRpp/BuildingClass.h:267`) — every producing building
 already owns a `FactoryClass`.** Multiple instances already coexist. So the bottleneck
@@ -525,16 +544,23 @@ Re-ordered 2026-09-19 around §7c: **the channel table is now the trunk.** `Mode
 ask C and ask B all reduce to routing on top of one owned table, so building it first
 turns three separate engine problems into three mappings.
 
-1. **P0 — probe.** ✅ written, deployed. Answers Q1–Q4, plus **Q5** (are the three
-   `Primary_Unused*` slots index-addressable? §7d).
+1. **P0 — probe.** ✅ written, deployed. Answers Q1–Q4.
    *Two false starts already: the DLL wasn't in the live injection list, then the config
    switched itself off on the map-INI pass. Both fixed; awaiting a clean run.*
+   **Q5 is already closed** — answered from the disassembly (§7d), no run needed.
 2. **P1 — ✅ DONE: the BuildCat experiment.** Confirmed in-game — only `Combat`
    separates. Scope of ask C is now the enumerable site list in §0 rev 3b.
-3. **P2 — the channel table.** Per-house dynamic table keyed by
-   `(AbstractType, isNaval, BuildCat, queueIndex)`, with `GetPrimaryFactory` `0x500510`
-   and `SetPrimaryFactory` `0x500850` routed through it, vanilla slots kept as the
-   compatibility path. **The trunk — everything below depends on it.**
+3. **P2 — the channel table. The trunk; everything below depends on it.**
+   - **P2a ✅ SHIPPED** (shadow mode). Table + both hooks, observing only —
+     every handler returns 0, nothing rerouted. Records on `SetPrimaryFactory`,
+     cross-checks our key derivation against the engine's own slot on
+     `GetPrimaryFactory`, logs only genuine disagreements (rate-limited to 40).
+     Opt-in: `[BuildQueueExt] ChannelTable=yes`. **Needs a game run to confirm zero
+     mismatches before P2b.**
+   - **P2b — take authority.** Only once the shadow is clean: serve
+     `queueIndex >= 1` from our table and return an explicit address instead of 0.
+     Vanilla keys keep falling through to the engine's slots, so behaviour without
+     any `Factory.Mode` tag stays byte-identical.
 4. **P3 — `Factory.Mode` (ask #10, §7c).** `Queue` and `Category` on top of P2;
    `Amplify`/`Inert` already exist. Must cooperate with Phobos's
    `UpdateNonMFBFactoryCounts` so a `Queue` building doesn't also amplify.
