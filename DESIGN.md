@@ -253,19 +253,41 @@ modifier bits are free. `0x6AB773` and `0x6AB312` are Antares-only.
 
 ## 5. Ask #1 — queue hold
 
-> **⚠ The primitive may already exist.** `FactoryClass` carries `OnHold`, `IsSuspended`,
-> and `IsManual` — YRpp documents the last as *"whether the current suspension state was
-> caused by the player"* — plus `Suspend(bool manual)` `0x4C9E60` / `Unsuspend`
-> `0x4C9EA0` (✔ `YRpp/FactoryClass.h`). Vanilla already suspends from the cameo
-> (Antares' hook is named `…_ProduceUnsuspended`). **P0's probe settles this (Q1/Q2)
-> before any code is written here.** If confirmed, #1 shrinks to "extend suspension to
-> *queued* items + free the front + draw a glyph."
+> **✅ Q1/Q2 ANSWERED IN-GAME 2026-09-19 — the hopeful reading was wrong.**
 >
-> None of `Suspend`/`Unsuspend`/`StartProduction`/`CompletedProduction` is hooked by any
-> framework (✔) — unclaimed.
+> **Q1 — `IsManual` is useless as a player-hold flag.** It read **`1` in all 7,337
+> observed samples**, never 0: on AI factories, and on factories that were not suspended
+> at all. YRpp's comment (*"whether the current suspension state was caused by the
+> player"*) does not describe runtime behaviour. **Feature #1 is therefore not a rename
+> of existing engine state** — it needs its own per-slot hold flag.
+>
+> **Q2 — a suspended item BLOCKS the whole queue.** Vanilla does not skip past a paused
+> item; everything behind it stops.
+>
+> Two consequences, both of which make #1 *more* valuable rather than less:
+> - §C2's claim that hold and concurrency are "orthogonal by construction" was
+>   optimistic. They are orthogonal **by design intent**, but since vanilla blocks, the
+>   skip-held-items behaviour must be actively implemented. Not free.
+> - **This is precisely why the 99999-count hack was useless** — and why
+>   `LimboOnComplete` (§7b) earns its keep: a finished building sits at `Susp=1` and
+>   **blocks the buildings queue until placed.** "Waiting for you to place it" is not a
+>   cosmetic annoyance, it is a stall.
+>
+> The *mechanism* still works — a right-click suspended a power plant mid-build at
+> `prog=28`. It is the *flag* that carries no information, not the *call*. And none of
+> `Suspend`/`Unsuspend`/`StartProduction`/`CompletedProduction` is hooked by any
+> framework (✔), so the ground is still clear.
 
 INI: `Queue.Holdable=no`, `Queue.HoldWhenComplete=no` (both opt-in). Toggle = a modifier
 click at the `0x6AB773` idiom, dispatched as an `EventClass` (§4).
+
+**What #1 must now actually do** (revised by Q1/Q2):
+1. Carry **our own** hold flag per queue slot — `IsManual` cannot be reused.
+2. **Break the block.** The real work is not marking an item held, it is making the
+   queue *advance past* a held item, which vanilla refuses to do. That is the same
+   engine change as ask B (N fronts), so §5 and P8 share machinery.
+3. Park completed items without stalling the channel — the `LimboOnComplete` case
+   generalised to any category.
 
 ---
 

@@ -107,10 +107,16 @@ void ProductionProbe::ReportHouseChannels(HouseClass* pHouse, const char* site)
 		// WhatAmI() of the produced object is what the Ares-lineage channel
 		// bookkeeping switches on (see the encyclopedia page for 0x4CA07A) —
 		// so print it, not the factory building's Factory= type.
-		Debug::Log("[BQExt]     factory obj=%-12s abs=%d prog=%4d queued=%d "
+		// Print Naval explicitly. WhatAmI() reports Unit(1) for both vehicles
+		// and ships, so without this the two channels are indistinguishable in
+		// the dump -- and vehicle-vs-naval is one of the central distinctions
+		// of this whole subsystem (they share a tab but not a queue). The first
+		// run built a Dolphin and the log could not show it.
+		Debug::Log("[BQExt]     factory obj=%-12s abs=%d naval=%d prog=%4d queued=%d "
 			"Susp=%d Manual=%d OnHold=%d\n",
 			pType ? pType->ID : "(none)",
 			pObject ? static_cast<int>(pObject->WhatAmI()) : -1,
+			pType && pType->Naval ? 1 : 0,
 			pFactory->Production.Value,
 			pFactory->QueuedObjects.Count,
 			pFactory->IsSuspended ? 1 : 0,
