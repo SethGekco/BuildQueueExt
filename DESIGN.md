@@ -20,6 +20,8 @@ Scope:
 | 6 | Floating cameo panels | `ControlClass`, per PR #1379's post-mortem (§9) |
 | 7 | Exclusive SW sidebar extensions | layer on merged PR #1384 (§8) |
 | 8 | >4 tabs | 56 mechanical sites (§9) |
+| 9 | Finished building → limbo, no placement | ✅ shipped, `LimboOnComplete=` (§7b) |
+| 10 | Buildings tagged to add queues / amplify vs own-queue | `Factory.Mode=` (§7c) |
 
 Addresses ✔ (confirmed) / ⚠ (unverified), per `SpawnExt/DESIGN.md` convention.
 
@@ -363,6 +365,102 @@ per BuildingType, never global default.
 
 ---
 
+## 7c. Ask #10 — what a producing building *is* to its channel (`Factory.Mode`)
+
+Added to scope 2026-09-19. The insight: "a second war factory" is currently one fixed
+behaviour, and it should be **a choice of four**.
+
+| Mode | What a 2nd building of the same type does | Status |
+|---|---|---|
+| **Amplify** | joins the existing queue and makes it *faster* | ✅ vanilla default |
+| **Inert** | contributes neither speed nor a queue | ✅ Phobos `ExcludeFromMultipleFactoryBonus=yes` |
+| **Queue** | **its own independent queue** for the same types — parallel, not faster | ❌ **new** |
+| **Category** | a new factory *type* with its own buildable set + tab (ask C, §3) | ❌ new |
+
+Phobos already implements one value of this mode. That is good evidence the framing is
+right: we are completing an existing axis, not inventing one.
+
+### Vanilla machinery underneath (✔ verified)
+- `RulesClass::MultipleFactory` (float, ✔ `YRpp/RulesClass.h:424`) — the per-extra-factory
+  speed bonus. **This is what "Amplify" *is*.**
+- `HouseClass::GetFactoryCount` `0x500910` — counts factories feeding that bonus
+  (Phobos hooks it).
+- `HouseClass_ExcludeFromMultipleFactoryBonus` `0x4FF9C9` / `0x4FFA99` — Phobos's
+  opt-out, maintaining its own `UpdateNonMFBFactoryCounts` tally
+  (✔ `Phobos/src/Ext/House/Hooks.cpp:399-416`).
+
+> **⚠ Coexistence.** `Inert` is **Phobos's** tag, not ours — do not reimplement it.
+> And `Mode=Queue` must *also* exclude the building from the speed bonus (it is not
+> amplifying), so BuildQueueExt has to cooperate with that same tally rather than
+> double-count. Get this wrong and a `Queue` building silently grants a queue **and** a
+> speed bonus.
+
+### Proposed INI surface
+```ini
+[SOMEBUILDING]
+Factory.Mode=Amplify       ; Amplify (default) | Inert | Queue | Category
+Factory.QueueCount=1       ; Mode=Queue: how many independent queues this grants
+Factory.Category=          ; Mode=Category: which category it produces for
+```
+Defaulting to `Amplify` keeps every existing mod byte-identical in behaviour.
+
+### The consequence: queue count becomes dynamic
+`Mode=Queue` means the number of queues is **a function of how many such buildings the
+house owns**, not a fixed set of categories. Six refineries with `Mode=Queue` means six
+queues. No fixed slot set can absorb that.
+
+> **Therefore BuildQueueExt must own a per-house dynamic channel table**, keyed by
+> `(AbstractType, isNaval, BuildCat, queueIndex)`, with `GetPrimaryFactory` `0x500510`
+> and `SetPrimaryFactory` `0x500850` routed through it. The vanilla slots (§7d) stay as
+> the compatibility path for the vanilla channels; ours backs everything beyond. This is
+> the same "one owner of the channel table" call as §1 — now **mandatory** rather than
+> optional.
+
+**Sidebar consequence.** N parallel queues for one type means N progress states behind
+**one cameo**. That is the same placement-identity problem as ask G (§3), so G and this
+share a solution — and both inherit the button-pool trap (§9).
+
+---
+
+## 7d. The primary-factory slots — and why the four chokepoints are the only lever
+
+`HouseClass` carries **nine** `FactoryClass*` primaries (✔ `YRpp/HouseClass.h:928-936`):
+
+```cpp
+Primary_ForAircraft;  Primary_ForInfantry;  Primary_ForVehicles;
+Primary_ForShips;     Primary_ForBuildings;
+Primary_Unused1;      Primary_Unused2;      Primary_Unused3;   // <- wedged here
+Primary_ForDefenses;
+```
+
+Two things worth noting. Defenses have their **own named slot**, so the
+Buildings/Defense split does not consume a spare. And the three spare slots sit
+**between** Buildings and Defenses rather than at the end — the shape of an
+enum-indexed table with unused indices, not trailing padding. That is suggestive that
+the engine's index math can address them, but **suggestive is not verified**:
+"Unused" is YRpp's *label*, and a field name taken at face value has already been wrong
+twice in this project (§0). Probe question **Q5** exists to settle it — dump all nine
+per house, see which slot each real factory lands in, and whether any `Unused` ever
+goes non-null.
+
+Either way §7c means the spare slots are at best a convenience for a couple of fixed
+new categories; they cannot serve `Mode=Queue`.
+
+**`BuildingClass::Factory` (✔ `YRpp/BuildingClass.h:267`) — every producing building
+already owns a `FactoryClass`.** Multiple instances already coexist. So the bottleneck
+was never "one item per factory type": it is that the house designates *one primary per
+channel* and the sidebar drives only that one. That reframes ask B from a redesign into
+a **routing change**, and it is exactly the seam `Mode=Queue` needs.
+
+**Why hooks and not source edits.** The ~8 hardcoded `BuildCat::DontCare` call sites
+(§0 rev 3b) live inside *compiled* `Antares.dll` / `Phobos.dll` and cannot be edited.
+But every one funnels through game functions — `GetPrimaryFactory` `0x500510`,
+`SetPrimaryFactory` `0x500850`, `IsBuildCat5` `0x5004E0`, `GetObjectTabIdx` `0x6ABCD0` —
+and **all four are hooked by no framework in the registry** (✔). That is simultaneously
+the only available lever and unusually clean ground.
+
+---
+
 ## 8. Sidebar prior art (merged SidebarExt)
 
 | PR | State | What |
@@ -423,19 +521,34 @@ factored, and folded as `add $0xd20`) — re-derive by data-flow, not grep.
 
 ## 10. Phasing
 
-1. **P0 — probe** *(written, needs a CI build + game run)*. Answers Q1–Q4.
-2. **P1 — the BuildCat experiment.** Set `BuildCat=Power` on a test structure, watch the
-   probe. One afternoon; decides C's cost and unblocks the highest-value ask.
-3. **P2 — ask C: third factory type.** New channel slot + `GetObjectTabIdx` routing +
-   the extra `Update_FactoriesQueues` pass + generalising `IsBuildCat5`.
-4. **P3 — ask #1 hold** (if the probe says it isn't already free).
-5. **P4 — asks G/H: multi-placement + per-placement policy.** Needs P5 for the pool.
-6. **P5 — sidebar structure: pool relocation → 3 columns → N tabs.** Pool relocation is
-   a prerequisite for anything that adds cameos, and fixes vanilla's 4K bug as a
-   side effect.
-7. **P6 — asks B/#2/#3: N fronts.** The hard engine change and the main sync surface.
-8. **P7 — asks D/E/F: exclusive-sidebar extensions**, layered on #1384.
-9. **P8 — ask #4 exit/output**, then SW-from-factory last.
+Re-ordered 2026-09-19 around §7c: **the channel table is now the trunk.** `Mode=Queue`,
+ask C and ask B all reduce to routing on top of one owned table, so building it first
+turns three separate engine problems into three mappings.
+
+1. **P0 — probe.** ✅ written, deployed. Answers Q1–Q4, plus **Q5** (are the three
+   `Primary_Unused*` slots index-addressable? §7d).
+   *Two false starts already: the DLL wasn't in the live injection list, then the config
+   switched itself off on the map-INI pass. Both fixed; awaiting a clean run.*
+2. **P1 — ✅ DONE: the BuildCat experiment.** Confirmed in-game — only `Combat`
+   separates. Scope of ask C is now the enumerable site list in §0 rev 3b.
+3. **P2 — the channel table.** Per-house dynamic table keyed by
+   `(AbstractType, isNaval, BuildCat, queueIndex)`, with `GetPrimaryFactory` `0x500510`
+   and `SetPrimaryFactory` `0x500850` routed through it, vanilla slots kept as the
+   compatibility path. **The trunk — everything below depends on it.**
+4. **P3 — `Factory.Mode` (ask #10, §7c).** `Queue` and `Category` on top of P2;
+   `Amplify`/`Inert` already exist. Must cooperate with Phobos's
+   `UpdateNonMFBFactoryCounts` so a `Queue` building doesn't also amplify.
+5. **P4 — ask C: new factory type.** Now just `Mode=Category` + generalised
+   `IsBuildCat5` `0x5004E0` + tab routing `GetObjectTabIdx` `0x6ABCD0`.
+6. **P5 — ask #1 hold** (only if the probe says `Suspend(manual)` isn't already it).
+7. **P6 — sidebar structure: pool relocation → 3 columns → N tabs.** Pool relocation
+   gates anything that adds cameos, and fixes vanilla's 4K bug as a side effect.
+8. **P7 — asks G/H: multi-placement + per-placement policy.** Needs P6 for the pool and
+   P2 for the queue identity; shares its solution with §7c's "N queues, one cameo".
+9. **P8 — asks B/#2/#3: N fronts *within* one queue.** Distinct from `Mode=Queue`
+   (which is N queues). The main sync surface.
+10. **P9 — asks D/E/F: exclusive-sidebar extensions**, layered on #1384.
+11. **P10 — ask #4 exit/output**, then SW-from-factory last.
 
 Prerequisite predicates throughout are consumed from [[prerequisiteext-project]], not
 rebuilt.
@@ -447,12 +560,21 @@ rebuilt.
 1. **Name.** Scope is now production + sidebar; `BuildQueueExt` undersells it.
    `ProductionExt`? `SidebarExt`? Repo currently `BuildQueueExt` with code + submodules,
    so renaming costs a repo move.
-2. **Is the queue machinery general over `BuildCat`?** ⚠ The one unknown gating C.
-   Settled by P1's experiment.
-3. **Placement identity** for G/H — index into a per-house placement list vs a synthetic
-   key. Determines the `EventClass` payload.
-4. **Hold modifier key** — shift is taken by queue-5.
-5. **Channel storage** — extend Antares' five fields, or replace with a map keyed by the
-   `(AbstractType, isNaval, BuildCat)` tuple? The tuple is the honest model.
-6. **Concurrency cap shape** — flat per-house vs per-category, noting naval is its own
-   channel.
+2. ~~**Is the queue machinery general over `BuildCat`?**~~ **CLOSED 2026-09-08** —
+   no. Only `Combat` separates; verified in-game (§0 rev 3b).
+3. ~~**Channel storage** — extend Antares' five fields, or a map?~~ **CLOSED
+   2026-09-19 (§7c)** — own a dynamic per-house table keyed by
+   `(AbstractType, isNaval, BuildCat, queueIndex)`. `Mode=Queue` makes the count
+   dynamic, so no fixed slot set works.
+4. **Save/load of that table** — the vanilla nine primaries are serialised with the
+   house; ours will not be. Follows the [[savegame-stream]] boundaries.
+5. **`Mode=Queue` vs the multiple-factory bonus** — confirm a `Queue` building is
+   excluded from `MultipleFactory` via Phobos's existing `UpdateNonMFBFactoryCounts`
+   tally rather than a second, competing mechanism.
+6. **Does `Factory.QueueCount>1` make sense?** Or is one queue per building the honest
+   model? Several queues from a single building has no vanilla analogue.
+7. **Placement identity** for G/H and for "N queues, one cameo" (§7c) — index into a
+   per-house queue list vs a synthetic key. Determines the `EventClass` payload.
+8. **Hold modifier key** — shift is taken by queue-5.
+9. **Concurrency cap shape** (ask B, N fronts *within* a queue) — flat per-house vs
+   per-category, noting naval is its own channel.
