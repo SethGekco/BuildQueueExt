@@ -31,7 +31,9 @@
     <!-- P0: production probe -->
     <ClCompile Include="src\ProductionProbe.cpp" />
     <ClCompile Include="src\LimboOnComplete.cpp" />
+    <ClCompile Include="src\ChannelTable.cpp" />
     <ClCompile Include="src\Hooks.ProductionProbe.cpp" />
+    <ClCompile Include="src\Hooks.ChannelTable.cpp" />
   </ItemGroup>
 
   <!-- Header files -->
@@ -39,6 +41,7 @@
     <ClInclude Include="src\BuildQueueExt.h" />
     <ClInclude Include="src\ProductionProbe.h" />
     <ClInclude Include="src\LimboOnComplete.h" />
+    <ClInclude Include="src\ChannelTable.h" />
   </ItemGroup>
 
   <PropertyGroup Label="Globals">

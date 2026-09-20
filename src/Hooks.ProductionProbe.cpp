@@ -1,5 +1,6 @@
 #include "ProductionProbe.h"
 #include "LimboOnComplete.h"
+#include "ChannelTable.h"
 
 #include <FactoryClass.h>
 #include <HouseClass.h>
@@ -39,6 +40,7 @@ DEFINE_HOOK(0x668BF0, BQExt_RulesClass_Addition_ReadConfig, 0x5)
 
 	ProductionProbe::ReadConfig(pINI);
 	LimboOnComplete::ReadConfig(pINI);
+	ChannelTable::ReadConfig(pINI);
 
 	return 0;
 }
