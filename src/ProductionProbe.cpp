@@ -8,20 +8,31 @@
 
 bool ProductionProbe::Enabled = false;
 bool ProductionProbe::Verbose = false;
+int ProductionProbe::ReadConfigPasses = 0;
 
 void ProductionProbe::ReadConfig(CCINIClass* pINI)
 {
 	if (!pINI)
 		return;
 
-	Enabled = pINI->ReadBool("BuildQueueExt", "Probe", false);
-	Verbose = pINI->ReadBool("BuildQueueExt", "Probe.Verbose", false);
+	// Pass the CURRENT value as the default, never a literal false.
+	//
+	// RulesClass::Addition is the "add another INI on top" pass -- it runs for
+	// rulesmd AND again for the map's INI. A literal `false` default meant the
+	// map pass, which has no [BuildQueueExt] section, silently switched the
+	// probe back off: exactly one "enabled" line in the log and then nothing,
+	// for six games. This is the same trap Phobos avoids by using
+	// Valueable::Read, which leaves the value untouched when the key is absent.
+	Enabled = pINI->ReadBool("BuildQueueExt", "Probe", Enabled);
+	Verbose = pINI->ReadBool("BuildQueueExt", "Probe.Verbose", Verbose);
 
-	if (Enabled)
-	{
-		Debug::Log("[BQExt] production probe enabled%s\n",
-			Verbose ? " (verbose)" : "");
-	}
+	// Log every pass, not just the enabling one, so the number of INI passes is
+	// visible in the log rather than inferred.
+	++ReadConfigPasses;
+	Debug::Log("[BQExt] ReadConfig pass %d: Probe=%s Verbose=%s\n",
+		ReadConfigPasses,
+		Enabled ? "yes" : "no",
+		Verbose ? "yes" : "no");
 }
 
 bool ProductionProbe::ShouldLog(FactoryClass* pFactory)

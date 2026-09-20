@@ -32,6 +32,11 @@ public:
 	// Probe.Verbose=yes also logs per-step progress ticks (very chatty).
 	static bool Verbose;
 
+	// How many times RulesClass::Addition has handed us an INI. Logged so the
+	// multi-pass behaviour is observable instead of inferred -- the first build
+	// assumed a single pass and was silently disabled by the map-INI pass.
+	static int ReadConfigPasses;
+
 	static void ReadConfig(CCINIClass* pINI);
 
 	// One-line snapshot of a factory's state, tagged with the call site.

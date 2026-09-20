@@ -12,19 +12,31 @@ void LimboOnComplete::ReadConfig(CCINIClass* pINI)
 	if (!pINI)
 		return;
 
-	Types.clear();
-
+	// Deliberately NOT Types.clear(). RulesClass::Addition runs once per INI --
+	// rulesmd, then the map's -- and clearing here meant the map pass wiped
+	// every flag set by rules. Instead each type's CURRENT state is the default,
+	// so an absent key changes nothing while an explicit `no` in a map INI still
+	// turns it off.
+	//
 	// BuildingTypeClass::Array is a reference, not a pointer — no indirection.
 	for (auto const pType : BuildingTypeClass::Array)
 	{
 		if (!pType)
 			continue;
 
-		if (pINI->ReadBool(pType->ID, "LimboOnComplete", false))
-		{
+		bool const was = Types.find(pType) != Types.end();
+		bool const now = pINI->ReadBool(pType->ID, "LimboOnComplete", was);
+
+		if (now == was)
+			continue;
+
+		if (now)
 			Types.insert(pType);
-			Debug::Log("[BQExt] LimboOnComplete: %s\n", pType->ID);
-		}
+		else
+			Types.erase(pType);
+
+		Debug::Log("[BQExt] LimboOnComplete %s: %s\n",
+			now ? "enabled" : "disabled", pType->ID);
 	}
 }
 
