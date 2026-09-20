@@ -9,6 +9,7 @@ bool ChannelTable::ShadowEnabled = false;
 std::map<HouseClass*, std::map<int, FactoryClass*>> ChannelTable::Tables;
 int ChannelTable::Mismatches = 0;
 int ChannelTable::Agreements = 0;
+int ChannelTable::Records = 0;
 
 void ChannelTable::ReadConfig(CCINIClass* pINI)
 {
@@ -89,6 +90,15 @@ void ChannelTable::Record(HouseClass* pHouse, AbstractType absID, bool isNaval,
 	// whole game), so this map stays small and bounded -- unlike a per-techno
 	// map, which is the shape that leaked in AggressiveStance.
 	Tables[pHouse][EncodeKey(absID, isNaval, cat, queueIndex)] = pFactory;
+
+	// Same reasoning as the agreement counter: prove the setter fires at all.
+	if (++Records == 1 || Records % 500 == 0)
+	{
+		char key[96];
+		DescribeKey(key, sizeof(key), absID, isNaval, cat, queueIndex);
+		Debug::Log("[BQExt] ChannelTable record #%d %s -> %p\n",
+			Records, key, pFactory);
+	}
 }
 
 FactoryClass* ChannelTable::Lookup(HouseClass* pHouse, AbstractType absID,
@@ -129,6 +139,20 @@ void ChannelTable::VerifyAgainstVanilla(
 	if (pOurs == pVanilla)
 	{
 		++Agreements;
+
+		// Log the first agreement and then sparsely. Without this, "0
+		// mismatches" is ambiguous: it cannot be told apart from "the
+		// comparison never ran because nothing was ever recorded". The first
+		// clean run hit exactly that -- zero mismatches, and no way to prove
+		// the check had been exercised at all.
+		if (Agreements == 1 || Agreements % 1000 == 0)
+		{
+			char key[96];
+			DescribeKey(key, sizeof(key), absID, isNaval, cat, 0);
+			Debug::Log("[BQExt] ChannelTable agree #%d %s (slot 0x%X)\n",
+				Agreements, key, VanillaSlotOffset(absID, isNaval, cat));
+		}
+
 		return;
 	}
 
@@ -152,4 +176,5 @@ void ChannelTable::Clear()
 	Tables.clear();
 	Mismatches = 0;
 	Agreements = 0;
+	Records = 0;
 }

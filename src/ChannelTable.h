@@ -112,5 +112,6 @@ private:
 	// unbounded log would be both useless and enormous.
 	static int Mismatches;
 	static int Agreements;
+	static int Records;
 	static constexpr int MaxMismatchReports = 40;
 };
