@@ -117,7 +117,14 @@ Vanilla instantiates six channels from this key:
 
 Three independent groupings, routinely conflated — **channel ≠ tab ≠ factory**:
 
-- **Naval is its own channel, sharing the vehicle tab.**
+- **Naval is its own channel, sharing the vehicle tab — and sharing the type list too.**
+  Ships are declared in `[VehicleTypes]` alongside land vehicles; there is no separate
+  naval list, and `WhatAmI()` returns `Unit` for both. The channel split comes purely
+  from the **`Naval=` flag on the type**, which callers pass as the `bool isNaval`
+  argument to `GetPrimaryFactory`/`SetPrimaryFactory`, selecting `0x53B8` over `0x53B4`
+  (✔ disassembled, §7d). So: same list, same `AbstractType`, same tab — *different
+  queue*, split by one flag. This is the single easiest thing in the subsystem to
+  mis-observe, because nothing except that flag distinguishes the two.
 - **Defenses are their own queue, sharing the ConYard.** Antares comments this at
   `0x509140`; the vanilla test is `ObjectTypeClass::IsBuildCat5` @ `0x5004E0` (✔
   `YRpp/ObjectTypeClass.h:45`) — literally "is this BuildCat 5 (Combat)?", i.e. the
