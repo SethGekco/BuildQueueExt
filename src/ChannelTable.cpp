@@ -6,12 +6,14 @@
 #include <cstdio>
 
 bool ChannelTable::ShadowEnabled = false;
+bool ChannelTable::Authoritative = false;
 std::map<HouseClass*, std::map<int, FactoryClass*>> ChannelTable::Tables;
 int ChannelTable::Mismatches = 0;
 int ChannelTable::Agreements = 0;
 int ChannelTable::Records = 0;
 int ChannelTable::Gets = 0;
 int ChannelTable::UnmappedGets = 0;
+int ChannelTable::Resolves = 0;
 
 void ChannelTable::ReadConfig(CCINIClass* pINI)
 {
@@ -22,6 +24,8 @@ void ChannelTable::ReadConfig(CCINIClass* pINI)
 	// a literal default would switch this off on the map pass. See
 	// ProductionProbe::ReadConfig for the full account of that bug.
 	ShadowEnabled = pINI->ReadBool("BuildQueueExt", "ChannelTable", ShadowEnabled);
+	Authoritative = pINI->ReadBool(
+		"BuildQueueExt", "ChannelTable.Authoritative", Authoritative);
 }
 
 int ChannelTable::VanillaSlotOffset(AbstractType absID, bool isNaval, BuildCat cat)
@@ -186,6 +190,29 @@ void ChannelTable::ObserveGet(
 	}
 }
 
+FactoryClass* ChannelTable::Resolve(
+	HouseClass* pHouse, AbstractType absID, bool isNaval, BuildCat cat)
+{
+	++Resolves;
+
+	// P2b-1: answer exactly as vanilla would, from the engine's own storage.
+	// Deliberately NOT from our table -- the table is warmed from this same
+	// slot, so reading it here would add a failure mode (a stale entry) while
+	// proving nothing extra. P2b-2 is where our table starts overriding, and
+	// only for keys whose vanilla slot is null.
+	auto const pVanilla = ReadVanillaSlot(pHouse, absID, isNaval, cat);
+
+	if (Resolves == 1 || Resolves % 20000 == 0)
+	{
+		char key[96];
+		DescribeKey(key, sizeof(key), absID, isNaval, cat, 0);
+		Debug::Log("[BQExt] ChannelTable AUTHORITATIVE resolve #%d %s -> %p\n",
+			Resolves, key, pVanilla);
+	}
+
+	return pVanilla;
+}
+
 void ChannelTable::Clear()
 {
 	Tables.clear();
@@ -194,4 +221,5 @@ void ChannelTable::Clear()
 	Records = 0;
 	Gets = 0;
 	UnmappedGets = 0;
+	Resolves = 0;
 }

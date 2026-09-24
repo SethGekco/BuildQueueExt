@@ -73,6 +73,12 @@ public:
 
 	// [BuildQueueExt] ChannelTable=yes — shadow logging. Off by default.
 	static bool ShadowEnabled;
+
+	// [BuildQueueExt] ChannelTable.Authoritative=yes — P2b. Off by default.
+	// When set, we answer GetPrimaryFactory ourselves instead of letting the
+	// vanilla body run. In P2b-1 the answer is identical to vanilla's, so any
+	// observable change is a bug; that is the point of the step.
+	static bool Authoritative;
 	static void ReadConfig(CCINIClass* pINI);
 
 	// The vanilla slot offset this key resolves to, or 0 when the key has no
@@ -104,6 +110,10 @@ public:
 	static void ObserveGet(
 		HouseClass* pHouse, AbstractType absID, bool isNaval, BuildCat cat);
 
+	// The value served when Authoritative. P2b-1: exactly vanilla's answer.
+	static FactoryClass* Resolve(
+		HouseClass* pHouse, AbstractType absID, bool isNaval, BuildCat cat);
+
 	static void Clear();
 
 private:
@@ -116,5 +126,6 @@ private:
 	static int Records;
 	static int Gets;
 	static int UnmappedGets;
+	static int Resolves;
 	static constexpr int MaxMismatchReports = 40;
 };

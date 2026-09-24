@@ -22,18 +22,59 @@
 //
 // Nothing below alters behaviour. Every handler returns 0.
 
-DEFINE_HOOK(0x500510, BQExt_HouseClass_GetPrimaryFactory_Shadow, 0x5)
+// ---------------------------------------------------------------------------
+// P2b — TAKING AUTHORITY.
+//
+// ⚠ SCOPE CORRECTION. The plan said "serve queueIndex >= 1 from our table
+// here". That is not expressible at this seat: `GetPrimaryFactory(abs, naval,
+// cat)` has **no queue-index parameter**. The engine asks for *the* primary of
+// a channel and expects exactly one factory back; it has no vocabulary for a
+// second queue, so it never asks for one. Multi-queue therefore cannot be
+// delivered by redirecting this function alone -- it needs the CALLER to know
+// which queue it is asking about, which is the same placement-identity problem
+// as ask G (DESIGN §3). What this seat *can* do is decide **which** factory
+// answers, including supplying one when vanilla has none -- which is exactly
+// what `AlwaysAvailable` needs (§7e).
+//
+// So P2b lands in two steps, and this is the first:
+//
+//   P2b-1 (here)  AUTHORITATIVE PASS-THROUGH. Take over the return path and
+//                 answer with the same value vanilla would. Behaviour must be
+//                 bit-identical; the point is to prove this hot seat can hold
+//                 authority at all -- correct EAX, correct stack, correct
+//                 return -- before anything depends on it. ~310,000 calls per
+//                 game means a mistake here is instant and total.
+//   P2b-2 (next)  SUBSTITUTION. Answer with a house-owned factory when the
+//                 vanilla slot is null, gated per type. That is the real
+//                 AlwaysAvailable mechanism.
+//
+// Returning `0x500570` -- a bare `ret 0xC` (✔ disassembled) -- hands back
+// whatever we put in EAX. A non-zero return also means Syringe's stub does NOT
+// replay the stolen `mov eax,[esp+4]; dec eax`, which is required: those bytes
+// would clobber the EAX we just set.
+
+DEFINE_HOOK(0x500510, BQExt_HouseClass_GetPrimaryFactory, 0x5)
 {
+	enum { ReturnEAX = 0x500570 };
+
 	GET(HouseClass*, pThis, ECX);
 	GET_STACK(AbstractType, absID, 0x4);
 	GET_STACK(bool, isNaval, 0x8);
 	GET_STACK(BuildCat, cat, 0xC);
 
 	// Observe the key and warm the table from the engine's own slot. This is
-	// now the ONLY population path -- see the note on SetPrimaryFactory below.
+	// the ONLY population path -- see the note on SetPrimaryFactory below.
 	ChannelTable::ObserveGet(pThis, absID, isNaval, cat);
 
-	return 0;
+	if (!ChannelTable::Authoritative)
+		return 0;
+
+	// Off by default, and one INI key reverts it. Until P2b-2 this resolves to
+	// precisely the vanilla answer, so a behaviour change here is a bug by
+	// definition -- which is what makes it a usable test of the seat.
+	R->EAX(ChannelTable::Resolve(pThis, absID, isNaval, cat));
+
+	return ReturnEAX;
 }
 
 // ---------------------------------------------------------------------------
