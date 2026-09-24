@@ -556,11 +556,44 @@ already express.
    come out — which is why `LimboOnComplete=yes` is the natural partner rather than an
    optional extra.
 
+### ✅ Seat proven 2026-09-23 — and the hard part is now precisely located
+
+In-game at the `0x5F7A89` epilogue: **300,000 calls, 300,000 types recovered, 0 lost.**
+`ECX` survives Antares' full replacement intact. The tag parses
+(`AlwaysAvailable enabled: GAPILL`) once read at the Read_File *tail*, and the target
+case fires — **31 × "no factory, type is tagged"** in one short match.
+
+The modder's own observations match the two-halves model exactly:
+- *"doesn't come up until prerequisites are satisfied"* → the **prerequisite half**,
+  working as designed and not ours.
+- *"doesn't stay when the Construction Yard is absent"* → the **factory half**, which is
+  precisely what those 31 lines are detecting and what is still unimplemented.
+
+> **⚠ CORRECTION — `FindFactory` returns a `BuildingClass*`, not a `FactoryClass*`**
+> (✔ `YRpp/ObjectTypeClass.h:41`, and Antares' `FactoryCheckReturn{ State, BuildingClass* }`).
+> "Supply a factory when there is none" therefore means **supplying a real building** —
+> not fabricating a lightweight queue object. That is a materially harder thing and it
+> reshapes what is left.
+
+**The remaining fork (undecided):**
+1. **Stand-in** — return another building the house already owns. No creation, no sync
+   risk, but the returned building is also used for *where output appears* and *whether
+   it is powered*, so a wrong choice misbehaves at placement rather than at buildability.
+2. **Limbo-delivered factory** — reuse `LimboCreate` (§7b) to give the house a real but
+   map-absent ConYard that serves as the factory. It is a genuine `BuildingClass`, owned
+   and registered, occupying no cells. Attractive because the code already exists and is
+   proven — but it hands the house a hidden ConYard, and ⚠ **creation must not happen on
+   the `FindFactory` path**, which is sidebar-driven and therefore client-local: that is
+   a desync by construction. It would have to be created deterministically (scenario
+   start / house init) and only when the mod actually uses the tag.
+
+Option 2 looks right, with eager deterministic creation. Either way the exit-cell problem
+from §7e stands, which is why `LimboOnComplete` remains the natural partner.
+
 ### Scope call
 
-Entirely **ours**, and it sits directly on the P2 table — arguably its cleanest consumer,
-since it needs a channel with no building attached and nothing else. Phased as P4b,
-beside `Factory.Mode` (same "channel without a factory building" primitive).
+Entirely **ours**, and it sits on the P2 table. Phased as P4b, beside `Factory.Mode`
+(same "channel without a factory building" primitive).
 
 ---
 

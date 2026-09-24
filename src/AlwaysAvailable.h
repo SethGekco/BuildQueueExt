@@ -2,7 +2,7 @@
 
 #include <TechnoTypeClass.h>
 #include <HouseClass.h>
-#include <FactoryClass.h>
+#include <BuildingClass.h>
 
 #include <set>
 
@@ -68,7 +68,10 @@ public:
 	static TechnoTypeClass* IdentifyType(void* candidate);
 
 	// Called at the FindFactory epilogue with the incoming verdict.
-	static void ProbeEpilogue(void* ecx, FactoryClass* pVerdict,
+	// ⚠ pVerdict is a BuildingClass* -- FindFactory returns the factory
+	// BUILDING, not a FactoryClass. Substituting therefore means supplying a
+	// real building, which is the crux of the remaining design (§7e).
+	static void ProbeEpilogue(void* ecx, BuildingClass* pVerdict,
 		HouseClass* pHouse);
 
 private:

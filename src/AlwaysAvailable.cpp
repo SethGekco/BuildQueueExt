@@ -1,6 +1,7 @@
 #include "AlwaysAvailable.h"
 
 #include <CCINIClass.h>
+#include <BuildingClass.h>
 #include <BuildingTypeClass.h>
 #include <InfantryTypeClass.h>
 #include <UnitTypeClass.h>
@@ -91,7 +92,7 @@ TechnoTypeClass* AlwaysAvailable::IdentifyType(void* candidate)
 }
 
 void AlwaysAvailable::ProbeEpilogue(
-	void* ecx, FactoryClass* pVerdict, HouseClass* pHouse)
+	void* ecx, BuildingClass* pVerdict, HouseClass* pHouse)
 {
 	if (!ProbeEnabled)
 		return;

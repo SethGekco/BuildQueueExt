@@ -1,7 +1,7 @@
 #include "AlwaysAvailable.h"
 
 #include <HouseClass.h>
-#include <FactoryClass.h>
+#include <BuildingClass.h>
 #include <Utilities/Macro.h>
 
 // ObjectTypeClass::FindFactory EPILOGUE @ 0x5F7A89 — see AlwaysAvailable.h for
@@ -24,7 +24,8 @@
 // Whether ECX survives Antares' handler is THE open question; this hook exists
 // to answer it, not to act on it.
 //
-//   EAX        = FactoryClass*      Antares' verdict (null = no factory)
+//   EAX        = BuildingClass*     Antares' verdict -- the factory BUILDING,
+//                                  NOT a FactoryClass (null = none found)
 //   ECX        = TechnoTypeClass*   ...if it survived
 //   [ESP+0x4]  = bool allowOccupied
 //   [ESP+0x8]  = bool requirePower
@@ -35,7 +36,7 @@
 
 DEFINE_HOOK(0x5F7A89, BQExt_ObjectTypeClass_FindFactory_Epilogue, 0x5)
 {
-	GET(FactoryClass*, pVerdict, EAX);
+	GET(BuildingClass*, pVerdict, EAX);
 	GET(void*, ecx, ECX);
 	GET_STACK(HouseClass*, pHouse, 0x10);
 
