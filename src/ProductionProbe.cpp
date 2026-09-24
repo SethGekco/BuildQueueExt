@@ -29,16 +29,18 @@ void ProductionProbe::ReadConfig(CCINIClass* pINI)
 	++ReadConfigPasses;
 }
 
-void ProductionProbe::LogConfigPass(bool channelTable)
+void ProductionProbe::LogConfigPass(bool channelTable, bool authoritative)
 {
 	// Log every pass, not just the enabling one, so the number of INI passes is
 	// visible in the log rather than inferred -- and report EVERY switch, since
 	// a missing one makes "is the feature even on?" unanswerable after the fact.
-	Debug::Log("[BQExt] ReadConfig pass %d: Probe=%s Verbose=%s ChannelTable=%s\n",
+	Debug::Log("[BQExt] ReadConfig pass %d: Probe=%s Verbose=%s ChannelTable=%s"
+		" Authoritative=%s\n",
 		ReadConfigPasses,
 		Enabled ? "yes" : "no",
 		Verbose ? "yes" : "no",
-		channelTable ? "yes" : "no");
+		channelTable ? "yes" : "no",
+		authoritative ? "yes" : "no");
 }
 
 bool ProductionProbe::ShouldLog(FactoryClass* pFactory)

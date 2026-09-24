@@ -46,7 +46,8 @@ DEFINE_HOOK(0x668BF0, BQExt_RulesClass_Addition_ReadConfig, 0x5)
 	// that one line reports every switch. The first shadow run could not be
 	// diagnosed from the log because the pass line showed Probe and Verbose but
 	// not ChannelTable -- leaving "is it even on?" unanswerable.
-	ProductionProbe::LogConfigPass(ChannelTable::ShadowEnabled);
+	ProductionProbe::LogConfigPass(
+		ChannelTable::ShadowEnabled, ChannelTable::Authoritative);
 
 	return 0;
 }
