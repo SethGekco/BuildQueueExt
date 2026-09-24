@@ -98,9 +98,10 @@ public:
 	static FactoryClass* Lookup(HouseClass* pHouse, AbstractType absID,
 		bool isNaval, BuildCat cat, int queueIndex);
 
-	// Shadow check on the getter: compares our queueIndex-0 entry against the
-	// engine's own slot and reports divergence. Silent when they agree.
-	static void VerifyAgainstVanilla(
+	// Driven by GetPrimaryFactory -- the ONLY live population path, because
+	// SetPrimaryFactory has no callers (see Hooks.ChannelTable.cpp). Warms the
+	// table from the engine's slot and reports the call pattern sparsely.
+	static void ObserveGet(
 		HouseClass* pHouse, AbstractType absID, bool isNaval, BuildCat cat);
 
 	static void Clear();
@@ -113,5 +114,7 @@ private:
 	static int Mismatches;
 	static int Agreements;
 	static int Records;
+	static int Gets;
+	static int UnmappedGets;
 	static constexpr int MaxMismatchReports = 40;
 };

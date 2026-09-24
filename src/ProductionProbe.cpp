@@ -26,13 +26,19 @@ void ProductionProbe::ReadConfig(CCINIClass* pINI)
 	Enabled = pINI->ReadBool("BuildQueueExt", "Probe", Enabled);
 	Verbose = pINI->ReadBool("BuildQueueExt", "Probe.Verbose", Verbose);
 
-	// Log every pass, not just the enabling one, so the number of INI passes is
-	// visible in the log rather than inferred.
 	++ReadConfigPasses;
-	Debug::Log("[BQExt] ReadConfig pass %d: Probe=%s Verbose=%s\n",
+}
+
+void ProductionProbe::LogConfigPass(bool channelTable)
+{
+	// Log every pass, not just the enabling one, so the number of INI passes is
+	// visible in the log rather than inferred -- and report EVERY switch, since
+	// a missing one makes "is the feature even on?" unanswerable after the fact.
+	Debug::Log("[BQExt] ReadConfig pass %d: Probe=%s Verbose=%s ChannelTable=%s\n",
 		ReadConfigPasses,
 		Enabled ? "yes" : "no",
-		Verbose ? "yes" : "no");
+		Verbose ? "yes" : "no",
+		channelTable ? "yes" : "no");
 }
 
 bool ProductionProbe::ShouldLog(FactoryClass* pFactory)

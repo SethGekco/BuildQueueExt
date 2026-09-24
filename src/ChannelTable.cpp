@@ -10,6 +10,8 @@ std::map<HouseClass*, std::map<int, FactoryClass*>> ChannelTable::Tables;
 int ChannelTable::Mismatches = 0;
 int ChannelTable::Agreements = 0;
 int ChannelTable::Records = 0;
+int ChannelTable::Gets = 0;
+int ChannelTable::UnmappedGets = 0;
 
 void ChannelTable::ReadConfig(CCINIClass* pINI)
 {
@@ -120,54 +122,47 @@ FactoryClass* ChannelTable::Lookup(HouseClass* pHouse, AbstractType absID,
 	return itKey == itHouse->second.end() ? nullptr : itKey->second;
 }
 
-void ChannelTable::VerifyAgainstVanilla(
+void ChannelTable::ObserveGet(
 	HouseClass* pHouse, AbstractType absID, bool isNaval, BuildCat cat)
 {
-	if (!ShadowEnabled || !pHouse)
+	if (!pHouse)
 		return;
 
-	auto const pVanilla = ReadVanillaSlot(pHouse, absID, isNaval, cat);
-	auto const pOurs = Lookup(pHouse, absID, isNaval, cat, 0);
+	++Gets;
 
-	// Absent-from-our-table is not a mismatch on its own: the engine sets
-	// primaries through paths we have not observed yet (load, capture), so a
-	// null on our side simply means "not seen". Only a genuine disagreement
-	// between two non-null answers indicates the key derivation is wrong.
-	if (!pOurs)
-		return;
+	auto const offset = VanillaSlotOffset(absID, isNaval, cat);
 
-	if (pOurs == pVanilla)
+	// A key the engine itself ignores. Worth counting separately rather than
+	// silently dropping -- if this ever dominates, the key derivation is wrong.
+	if (!offset)
 	{
-		++Agreements;
-
-		// Log the first agreement and then sparsely. Without this, "0
-		// mismatches" is ambiguous: it cannot be told apart from "the
-		// comparison never ran because nothing was ever recorded". The first
-		// clean run hit exactly that -- zero mismatches, and no way to prove
-		// the check had been exercised at all.
-		if (Agreements == 1 || Agreements % 1000 == 0)
-		{
-			char key[96];
-			DescribeKey(key, sizeof(key), absID, isNaval, cat, 0);
-			Debug::Log("[BQExt] ChannelTable agree #%d %s (slot 0x%X)\n",
-				Agreements, key, VanillaSlotOffset(absID, isNaval, cat));
-		}
-
+		++UnmappedGets;
 		return;
 	}
 
-	if (++Mismatches <= MaxMismatchReports)
+	auto const pVanilla = ReadVanillaSlot(pHouse, absID, isNaval, cat);
+
+	// Warm the table from the engine's own storage. This is the only
+	// population path: SetPrimaryFactory has no callers (see
+	// Hooks.ChannelTable.cpp), so every slot write is inlined and unobservable
+	// without hooking ~30 scattered sites.
+	if (pVanilla)
+		Record(pHouse, absID, isNaval, cat, 0, pVanilla);
+
+	if (!ShadowEnabled)
+		return;
+
+	// Report the call pattern sparsely. The useful signal now is *which*
+	// channels get queried and how hot the path is -- P2b has to serve every
+	// one of these -- not a comparison, which would be circular once the table
+	// is populated from the same slot it would be checked against.
+	if (Gets == 1 || Gets % 2000 == 0)
 	{
 		char key[96];
 		DescribeKey(key, sizeof(key), absID, isNaval, cat, 0);
-
-		Debug::Log("[BQExt] ChannelTable MISMATCH #%d %s: ours=%p vanilla=%p"
-			" (slot 0x%X)  [agreements so far %d]\n",
-			Mismatches, key, pOurs, pVanilla,
-			VanillaSlotOffset(absID, isNaval, cat), Agreements);
-
-		if (Mismatches == MaxMismatchReports)
-			Debug::Log("[BQExt] ChannelTable: further mismatches suppressed\n");
+		Debug::Log("[BQExt] ChannelTable get #%d %s -> slot 0x%X = %p"
+			"  [records %d, unmapped %d]\n",
+			Gets, key, offset, pVanilla, Records, UnmappedGets);
 	}
 }
 
@@ -177,4 +172,6 @@ void ChannelTable::Clear()
 	Mismatches = 0;
 	Agreements = 0;
 	Records = 0;
+	Gets = 0;
+	UnmappedGets = 0;
 }

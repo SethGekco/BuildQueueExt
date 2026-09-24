@@ -39,6 +39,9 @@ public:
 
 	static void ReadConfig(CCINIClass* pINI);
 
+	// Emits the one-line summary of every switch for this pass.
+	static void LogConfigPass(bool channelTable);
+
 	// One-line snapshot of a factory's state, tagged with the call site.
 	static void Report(const char* site, FactoryClass* pFactory);
 
