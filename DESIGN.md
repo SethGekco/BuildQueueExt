@@ -22,6 +22,7 @@ Scope:
 | 8 | >4 tabs | 56 mechanical sites (§9) |
 | 9 | Finished building → limbo, no placement | ✅ shipped, `LimboOnComplete=` (§7b) |
 | 10 | Buildings tagged to add queues / amplify vs own-queue | `Factory.Mode=` (§7c) |
+| 11 | Buildable with no ConYard / outside every build category | `AlwaysAvailable=` + `UseBuildQueue=` (§7e) |
 
 Addresses ✔ (confirmed) / ⚠ (unverified), per `SpawnExt/DESIGN.md` convention.
 
@@ -451,6 +452,77 @@ share a solution — and both inherit the button-pool trap (§9).
 
 ---
 
+## 7e. Ask #11 — `AlwaysAvailable` + `UseBuildQueue=no`
+
+Added to scope 2026-09-20. Both are feasible, and **they are the same feature wearing
+two hats** — which is the useful finding, because it means one mechanism serves both.
+
+### What actually gates a building on owning a ConYard (✔ source-read)
+
+Not the prerequisite. `HouseExt::HasFactory` (Antares `Ext/House/Body.cpp:377`) walks
+`pHouse->Buildings` and keeps only buildings where:
+
+```cpp
+pType->Factory == abs          // for a BuildingType, that IS the Construction Yard
+&& pType->InOwners(bitsOwners)
+&& pType->Naval == (abs == UnitType && isNaval)
+&& pExt->CanBeBuiltAt(pType)   // Ares/Antares BuiltAt / Factory.ExplicitOnly
+```
+…and returns `NoFactory, nullptr` when none match.
+
+So the ConYard is gating things **twice**, and only one of them matters:
+- As a **prerequisite** (`Prerequisite=GACNST`) — *already* removable in INI. Not a
+  feature.
+- As the **factory** — structural. With no ConYard there is no `FactoryClass` to
+  produce from, so the cameo is dead regardless of prerequisites. **This is the real
+  blocker and the actual ask.**
+
+### Why both tags collapse into one mechanism
+
+`AlwaysAvailable=yes` needs a producer that is not a building.
+`UseBuildQueue=no` needs a queue that is not the shared category queue.
+
+Both are *"a channel owned by the house rather than by a factory building"* — and that
+is exactly what the §7c dynamic channel table already stores. A `queueIndex >= 1` entry
+that is simply **not backed by a `BuildingClass`** satisfies both asks at once.
+
+```ini
+[SOMEBUILDING]
+AlwaysAvailable=yes     ; needs no factory building to be buildable
+UseBuildQueue=no        ; gets a private channel; never blocks a category
+```
+
+> **Pairs naturally with `LimboOnComplete=yes` (§7b).** A building with no ConYard still
+> has to be *placed* when it finishes, and placement is where the queue stalls (Q2).
+> `AlwaysAvailable` + `UseBuildQueue=no` + `LimboOnComplete` gives a structure that is
+> always buildable, never blocks anything, and materialises without a cursor — which is
+> almost certainly the combination the "utilized well" remark is reaching for.
+
+### ⚠ Traps (all previously documented, all still live)
+
+1. **Dead-code trap, twice.** Antares fully replaces both `ObjectTypeClass::FindFactory`
+   `0x5F7900` *and* `HouseClass::CanBuild` `0x4F7870`. Hooking inside either body is dead
+   code whenever Antares is loaded. Chain at the epilogues (`0x5F7A89` / `0x4F8361`).
+2. **`0x4F8361` is contested ground.** [[prerequisiteext-project]] already owns it, and
+   spawn gating was folded into PrerequisiteExt precisely because of the promote-vs-veto
+   race there. **`AlwaysAvailable`'s prerequisite half belongs to PrerequisiteExt, not
+   here.** BuildQueueExt should own only the *factory* half and consume PrereqExt's
+   verdict — two DLLs fighting over that epilogue is a known failure mode.
+3. **The cameo will grey out.** `HouseClass::ShouldDisableCameo` `0x50B370` is another
+   Antares/Ares full replacement, and it consults factory state. A buildable-but-
+   factoryless type needs handling there or the cameo is visible and unclickable.
+4. **Sync.** A house-owned channel is Logical state (§4) — it must serialise and be
+   identical on every client, which is open decision #4's problem arriving early.
+
+### Scope call
+
+The factory half is **ours** and sits directly on the P2 table — it is arguably the
+*cleanest* consumer of it, since it needs a channel with no building attached and
+nothing else. The prerequisite half is **PrerequisiteExt's**. Phase it after P2b, next
+to `Factory.Mode` (they share the same "channel without a factory building" primitive).
+
+---
+
 ## 7d. The primary-factory slots — and why the four chokepoints are the only lever
 
 `HouseClass` carries **nine** `FactoryClass*` primaries (✔ `YRpp/HouseClass.h:928-936`):
@@ -595,6 +667,9 @@ turns three separate engine problems into three mappings.
    `UpdateNonMFBFactoryCounts` so a `Queue` building doesn't also amplify.
 5. **P4 — ask C: new factory type.** Now just `Mode=Category` + generalised
    `IsBuildCat5` `0x5004E0` + tab routing `GetObjectTabIdx` `0x6ABCD0`.
+   **P4b — ask #11 (§7e):** `AlwaysAvailable` + `UseBuildQueue=no`, i.e. a channel with
+   no backing factory building. Same primitive as `Mode=Queue`, so it rides alongside;
+   the prerequisite half is deferred to [[prerequisiteext-project]].
 6. **P5 — ask #1 hold** (only if the probe says `Suspend(manual)` isn't already it).
 7. **P6 — sidebar structure: pool relocation → 3 columns → N tabs.** Pool relocation
    gates anything that adds cameos, and fixes vanilla's 4K bug as a side effect.
