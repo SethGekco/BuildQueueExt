@@ -55,7 +55,11 @@ public:
 	// [BuildQueueExt] AlwaysAvailable.Probe=yes — the diagnostic below.
 	static bool ProbeEnabled;
 
-	static void ReadConfig(CCINIClass* pINI);
+	// Split deliberately: the GLOBAL switch reads fine at the Read_File entry,
+	// but PER-TYPE tags must wait for the tail, where the TechnoType arrays
+	// actually exist. See Hooks.ProductionProbe.cpp for the full account.
+	static void ReadGlobalConfig(CCINIClass* pINI);
+	static void ReadTypeConfig(CCINIClass* pINI);
 	static bool IsEnabledFor(TechnoTypeClass* pType);
 
 	// Returns the argument only if it is genuinely one of the engine's

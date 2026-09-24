@@ -14,19 +14,29 @@ int AlwaysAvailable::TypeRecovered = 0;
 int AlwaysAvailable::TypeLost = 0;
 int AlwaysAvailable::NullVerdicts = 0;
 
-void AlwaysAvailable::ReadConfig(CCINIClass* pINI)
+void AlwaysAvailable::ReadGlobalConfig(CCINIClass* pINI)
 {
 	if (!pINI)
 		return;
 
-	// Current value as the default, never a literal — RulesClass::Addition runs
+	// Current value as the default, never a literal — RulesClass::Read_File runs
 	// once per INI and a literal would switch this off on the map pass.
 	ProbeEnabled = pINI->ReadBool(
 		"BuildQueueExt", "AlwaysAvailable.Probe", ProbeEnabled);
+}
 
-	// Buildings only for now: the feature is "needs no Construction Yard", and
-	// the ConYard is the BuildingType factory. Units already have their own
-	// factory requirement, which is a separate question.
+void AlwaysAvailable::ReadTypeConfig(CCINIClass* pINI)
+{
+	if (!pINI)
+		return;
+
+	// Buildings only: the feature is "needs no Construction Yard", and the
+	// ConYard is the BuildingType factory. Units have their own factory
+	// requirement, which is a separate question.
+	//
+	// Called from the Read_File TAIL, because at the entry this array is still
+	// empty on the rulesmd pass -- the very bug that made the first armed test
+	// silently do nothing.
 	for (auto const pType : BuildingTypeClass::Array)
 	{
 		if (!pType)

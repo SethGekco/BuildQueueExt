@@ -39,10 +39,11 @@ DEFINE_HOOK(0x668BF0, BQExt_RulesClass_Addition_ReadConfig, 0x5)
 {
 	GET_STACK(CCINIClass*, pINI, 0x4);
 
+	// GLOBAL switches only. [BuildQueueExt] is a plain section that exists in
+	// rulesmd, so it reads correctly this early.
 	ProductionProbe::ReadConfig(pINI);
-	LimboOnComplete::ReadConfig(pINI);
 	ChannelTable::ReadConfig(pINI);
-	AlwaysAvailable::ReadConfig(pINI);
+	AlwaysAvailable::ReadGlobalConfig(pINI);
 
 	// ChannelTable's state is logged here rather than in its own ReadConfig so
 	// that one line reports every switch. The first shadow run could not be
@@ -50,6 +51,38 @@ DEFINE_HOOK(0x668BF0, BQExt_RulesClass_Addition_ReadConfig, 0x5)
 	// not ChannelTable -- leaving "is it even on?" unanswerable.
 	ProductionProbe::LogConfigPass(
 		ChannelTable::ShadowEnabled, ChannelTable::Authoritative);
+
+	return 0;
+}
+
+// ---------------------------------------------------------------------------
+// PER-TYPE tags are read at the Read_File TAIL, not the entry.
+//
+// 0x668BF0 is the ENTRY of RulesClass::Read_File -- it runs BEFORE the section
+// readers that create the TechnoTypes. On the rulesmd pass
+// `BuildingTypeClass::Array` is therefore still empty, so a loop over it reads
+// nothing; and on the later gamemode/map passes the array is populated but
+// those INIs contain no `[GAPILL]` section, so every key reads as its default.
+// Net effect: a per-type tag placed in rulesmd is NEVER seen. That is exactly
+// what happened -- `AlwaysAvailable=yes` on GAPILL produced no parse line and
+// no effect across a full playthrough, and LimboOnComplete had the same latent
+// bug (never caught, because it was never armed on a building).
+//
+// 0x668F6A is the TAIL of the same function, after all section readers have
+// run, which is where Phobos also does its deferred type loading
+// ("RulesClass_Read_File_LoadTypes" / "RulesData_InitializeAfterAllLoaded",
+// both return 0 and chain). Stolen bytes are `A1 38 B2 A8 00`
+// (`mov eax,[0xA8B238]`) -- exactly 5, one whole instruction, absolute operand
+// so position-independent, safe to replay.
+//
+// This still fires once per pass, so the read-with-current-value-as-default
+// idiom is still required to survive the map pass.
+DEFINE_HOOK(0x668F6A, BQExt_RulesClass_ReadFile_Tail_ReadTypeTags, 0x5)
+{
+	GET_STACK(CCINIClass*, pINI, 0x4);
+
+	LimboOnComplete::ReadConfig(pINI);
+	AlwaysAvailable::ReadTypeConfig(pINI);
 
 	return 0;
 }
