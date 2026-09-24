@@ -706,10 +706,24 @@ turns three separate engine problems into three mappings.
      `AircraftType` → `0x53AC`. Independently confirms the BuildCat result a third way.
      ⚠ Coverage gap: the Ships slot `0x53B8` was never exercised — no `UnitType` with
      naval=1 appeared.
-   - **P2b — take authority.** Now unblocked: serve `queueIndex >= 1` from our table and
-     return an explicit address instead of 0. Vanilla keys keep falling through to the
-     engine's slots, so behaviour without any `Factory.Mode` tag stays byte-identical.
-     The hot path is ~310k calls per game, so the lookup must stay `find()`-only.
+   - **⚠ P2b scope correction.** "Serve `queueIndex >= 1` here" is **not expressible**:
+     `GetPrimaryFactory(abs, naval, cat)` has no queue-index parameter. The engine asks
+     for *the* primary and expects one factory back — it has no vocabulary for a second
+     queue, so it never asks. Multi-queue needs the **caller** to know which queue it is
+     asking about (same placement-identity problem as ask G, §3). What this seat *can*
+     do is decide **which** factory answers, including supplying one when vanilla has
+     none — which is exactly `AlwaysAvailable` (§7e). Hence the split:
+   - **✅ P2b-1 CONFIRMED in-game 2026-09-23 — authoritative pass-through.** We answer
+     `GetPrimaryFactory` instead of the vanilla body, with the identical value.
+     ~380,000 resolves, no crash, and the production lifecycle statistically unchanged
+     from the pre-authority run (AbandonProduction 120/120, Unsuspend 47/48, Completed
+     44/47, Suspend(manual) 1/1). **The seat holds authority** — correct `EAX`, stack and
+     return on a ~380k-calls-per-game path. Return target is `0x500570`, a bare `ret
+     0xC`; the non-zero return also stops Syringe replaying the stolen
+     `mov eax,[esp+4]; dec eax`, which would clobber our `EAX`.
+   - **P2b-2 — substitution.** Answer with a house-owned factory when the vanilla slot
+     is null, gated per type. This is the real `AlwaysAvailable` mechanism and the first
+     point where our table overrides rather than mirrors. Lookup stays `find()`-only.
 4. **P3 — `Factory.Mode` (ask #10, §7c).** `Queue` and `Category` on top of P2;
    `Amplify`/`Inert` already exist. Must cooperate with Phobos's
    `UpdateNonMFBFactoryCounts` so a `Queue` building doesn't also amplify.
