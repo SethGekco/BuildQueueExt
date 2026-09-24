@@ -77,9 +77,15 @@ DEFINE_HOOK(0x668BF0, BQExt_RulesClass_Addition_ReadConfig, 0x5)
 //
 // This still fires once per pass, so the read-with-current-value-as-default
 // idiom is still required to survive the map pass.
+// ⚠ REGISTER CONVENTION DIFFERS FROM THE ENTRY. At 0x668BF0 the INI arrives as
+// a stack argument; at this tail it is in **ESI** (`EDI = RulesClass*`,
+// `ESI = CCINIClass*`), because we are mid-function, not at a call boundary.
+// Reading [ESP+4] here yields garbage. Source: the encyclopedia's Rules-Load
+// page, which I failed to re-read before writing the first version of this
+// hook and shipped the stack form.
 DEFINE_HOOK(0x668F6A, BQExt_RulesClass_ReadFile_Tail_ReadTypeTags, 0x5)
 {
-	GET_STACK(CCINIClass*, pINI, 0x4);
+	GET(CCINIClass*, pINI, ESI);
 
 	LimboOnComplete::ReadConfig(pINI);
 	AlwaysAvailable::ReadTypeConfig(pINI);
