@@ -65,12 +65,32 @@ FactoryClass* ChannelTable::ReadVanillaSlot(
 int ChannelTable::EncodeKey(
 	AbstractType absID, bool isNaval, BuildCat cat, int queueIndex)
 {
-	// absID is small (< 0x28), BuildCat < 8, naval is a bit. Pack them low and
-	// leave the queue index room to grow, since Factory.Mode=Queue makes the
-	// count unbounded in principle.
+	// NORMALISE to exactly the dimensions the engine actually discriminates on,
+	// or the table invents distinctions the engine does not have.
+	//
+	// Observed in a 310,000-call run: the engine passes naval=1 for
+	// BUILDING types (naval yards) -- e.g. `abs=7 naval=1 cat=1` -- but its
+	// dispatch for BuildingType branches on BuildCat alone and never reads the
+	// naval flag, so `abs=7 naval=0 cat=1` and `abs=7 naval=1 cat=1` both
+	// resolve to 0x53BC. Encoding naval for buildings would give us two keys
+	// for one slot: harmless while both are warmed from that slot, but under
+	// P2b they could be served independently and silently diverge from each
+	// other and from the engine.
+	//
+	// Symmetrically, BuildCat is only consulted for BuildingType (and only as
+	// == Combat), so carrying it on unit/infantry/aircraft keys would split
+	// those channels by a value the engine ignores. Callers do pass varying
+	// cats there -- the hardcoded DontCare is a convention, not a guarantee.
+	auto const isBuilding = (absID == AbstractType::BuildingType);
+
+	auto const navalBit = (absID == AbstractType::UnitType && isNaval) ? 1 : 0;
+	auto const catBits = isBuilding
+		? (cat == BuildCat::Combat ? 1 : 0)
+		: 0;
+
 	return (static_cast<int>(absID) & 0xFF)
-		| ((isNaval ? 1 : 0) << 8)
-		| ((static_cast<int>(cat) & 0x7) << 9)
+		| (navalBit << 8)
+		| (catBits << 9)
 		| (queueIndex << 12);
 }
 
