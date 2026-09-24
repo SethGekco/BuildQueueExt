@@ -498,28 +498,60 @@ UseBuildQueue=no        ; gets a private channel; never blocks a category
 > always buildable, never blocks anything, and materialises without a cursor — which is
 > almost certainly the combination the "utilized well" remark is reaching for.
 
-### ⚠ Traps (all previously documented, all still live)
+### ✅ The boundary with PrerequisiteExt — settled 2026-09-20
 
-1. **Dead-code trap, twice.** Antares fully replaces both `ObjectTypeClass::FindFactory`
-   `0x5F7900` *and* `HouseClass::CanBuild` `0x4F7870`. Hooking inside either body is dead
-   code whenever Antares is loaded. Chain at the epilogues (`0x5F7A89` / `0x4F8361`).
-2. **`0x4F8361` is contested ground.** [[prerequisiteext-project]] already owns it, and
-   spawn gating was folded into PrerequisiteExt precisely because of the promote-vs-veto
-   race there. **`AlwaysAvailable`'s prerequisite half belongs to PrerequisiteExt, not
-   here.** BuildQueueExt should own only the *factory* half and consume PrereqExt's
-   verdict — two DLLs fighting over that epilogue is a known failure mode.
-3. **The cameo will grey out.** `HouseClass::ShouldDisableCameo` `0x50B370` is another
-   Antares/Ares full replacement, and it consults factory state. A buildable-but-
-   factoryless type needs handling there or the cameo is visible and unclickable.
-4. **Sync.** A house-owned channel is Logical state (§4) — it must serialise and be
-   identical on every client, which is open decision #4's problem arriving early.
+Decision: **the two DLLs stay separate, and they share an INI contract, not code.**
+Merging was considered and rejected — PrerequisiteExt's value is an engine-independent
+resolver with 85 host-run unit tests, and folding 11 hooks of live engine state into it
+would destroy exactly that property. See [[prerequisiteext-project]].
+
+**The split is cleaner than first assessed, because of one verified fact:**
+
+> `HouseClass::ShouldDisableCameo` `0x50B370` — Antares' full replacement — resolves the
+> factory via **`pThis->GetPrimaryFactory(abs, pType->Naval, BuildCat::DontCare)`**
+> (✔ `Antares-src/src/Ext/House/Hooks.Queue.cpp:124`).
+
+`GetPrimaryFactory` `0x500510` is the hook BuildQueueExt **already owns** (§7d, P2a). So
+returning a house-owned channel from that one function makes the cameo live, the sidebar
+strip resolve, and production route — **all three from a single seat.** No separate
+`0x50B370` hook is needed, and more importantly:
+
+> **BuildQueueExt never touches `0x4F8361`.** `HasFactory` *calls* `CanBuild`, not the
+> reverse (✔ `Ext/House/Body.cpp:382`), so the factory requirement and the prerequisite
+> verdict are independent. The promote-vs-veto race that forced the SpawnExt fold simply
+> never arises here.
+
+**Division of labour:**
+
+| Half | Owner | Mechanism |
+|---|---|---|
+| "May it be built?" — prerequisites, tech, house scope | **PrerequisiteExt** | its existing `Prerequisite.*` container family; nothing new required |
+| "What produces it?" — factory presence, queue, routing | **BuildQueueExt** | a house-owned channel returned from `GetPrimaryFactory` |
+
+They compose **without linking**, the same way spawn gating composes with SpawnExt: each
+reads INI and does its half, and the engine joins them. Dropping `GACNST` from
+`Prerequisite=` is a plain INI edit — no DLL is involved in the prerequisite half at all
+unless the modder wants *conditional* availability, which PrereqExt's existing tags
+already express.
+
+### ⚠ Remaining traps
+
+1. **Dead-code trap.** Antares fully replaces `ObjectTypeClass::FindFactory` `0x5F7900`;
+   hooks inside that body are dead whenever Antares is loaded. Our seat is
+   `GetPrimaryFactory`, which is unaffected — but anything added around factory *lookup*
+   must respect it.
+2. **Sync.** A house-owned channel is Logical state (§4): it must serialise and be
+   identical on every client. This is open decision #4 arriving early, and it is the
+   real cost of the feature.
+3. **A channel with no building has no exit cell.** Whatever it produces has nowhere to
+   come out — which is why `LimboOnComplete=yes` is the natural partner rather than an
+   optional extra.
 
 ### Scope call
 
-The factory half is **ours** and sits directly on the P2 table — it is arguably the
-*cleanest* consumer of it, since it needs a channel with no building attached and
-nothing else. The prerequisite half is **PrerequisiteExt's**. Phase it after P2b, next
-to `Factory.Mode` (they share the same "channel without a factory building" primitive).
+Entirely **ours**, and it sits directly on the P2 table — arguably its cleanest consumer,
+since it needs a channel with no building attached and nothing else. Phased as P4b,
+beside `Factory.Mode` (same "channel without a factory building" primitive).
 
 ---
 
