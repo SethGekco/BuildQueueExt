@@ -105,6 +105,15 @@ void          Update_FactoriesQueues(AbstractType factoryOf, bool isNaval, Build
    channel = ( AbstractType , isNaval , BuildCat )
 ```
 
+> **⚠ The tuple is not orthogonal — normalise before keying on it.** The engine passes
+> all three arguments always, but discriminates on far less: **`isNaval` is read only for
+> `UnitType`**, and **`BuildCat` only for `BuildingType`, and only as `== Combat`**.
+> Confirmed in a 310k-call run, where the engine passes `naval=1` for *naval yards* —
+> `abs=7 naval=1 cat=1` — which still resolves to the plain Buildings slot `0x53BC`.
+> Keying on the raw tuple therefore invents distinctions the engine does not have (two
+> keys, one slot). Harmless while entries are warmed from that shared slot; actively
+> wrong once P2b serves them independently. `ChannelTable::EncodeKey` normalises.
+
 Vanilla instantiates six channels from this key:
 
 | AbstractType | isNaval | BuildCat | Tab | Antares ext slot |
@@ -690,10 +699,17 @@ turns three separate engine problems into three mappings.
      `GetPrimaryFactory`, logs only genuine disagreements (rate-limited to 40).
      Opt-in: `[BuildQueueExt] ChannelTable=yes`. **Needs a game run to confirm zero
      mismatches before P2b.**
-   - **P2b — take authority.** Only once the shadow is clean: serve
-     `queueIndex >= 1` from our table and return an explicit address instead of 0.
-     Vanilla keys keep falling through to the engine's slots, so behaviour without
-     any `Factory.Mode` tag stays byte-identical.
+   - **✅ P2a CONFIRMED in-game 2026-09-23.** 310,000 getter calls, 122,009 records,
+     **`unmapped = 0`** — the key derivation covers every key the engine asks for.
+     Observed mappings all match the disassembly: `BuildingType` cat 0/1/2/3 → `0x53BC`
+     and cat 5 → `0x53CC`; `InfantryType` → `0x53B0`; `UnitType` naval=0 → `0x53B4`;
+     `AircraftType` → `0x53AC`. Independently confirms the BuildCat result a third way.
+     ⚠ Coverage gap: the Ships slot `0x53B8` was never exercised — no `UnitType` with
+     naval=1 appeared.
+   - **P2b — take authority.** Now unblocked: serve `queueIndex >= 1` from our table and
+     return an explicit address instead of 0. Vanilla keys keep falling through to the
+     engine's slots, so behaviour without any `Factory.Mode` tag stays byte-identical.
+     The hot path is ~310k calls per game, so the lookup must stay `find()`-only.
 4. **P3 — `Factory.Mode` (ask #10, §7c).** `Queue` and `Category` on top of P2;
    `Amplify`/`Inert` already exist. Must cooperate with Phobos's
    `UpdateNonMFBFactoryCounts` so a `Queue` building doesn't also amplify.
