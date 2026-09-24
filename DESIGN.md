@@ -721,9 +721,26 @@ turns three separate engine problems into three mappings.
      return on a ~380k-calls-per-game path. Return target is `0x500570`, a bare `ret
      0xC`; the non-zero return also stops Syringe replaying the stolen
      `mov eax,[esp+4]; dec eax`, which would clobber our `EAX`.
-   - **P2b-2 — substitution.** Answer with a house-owned factory when the vanilla slot
-     is null, gated per type. This is the real `AlwaysAvailable` mechanism and the first
-     point where our table overrides rather than mirrors. Lookup stays `find()`-only.
+   - **⚠ P2b-2 RE-SEATED 2026-09-23 — "substitute when the primary is null" is wrong.**
+     Two independent reasons, both found before writing any code:
+     1. **A null primary means *idle*, not "no factory available."** The slot is written
+        in the production-*begin* path: the five inlined writes cluster at
+        `0x4F59C2`/`0x4FA59A`/`0x4FA7EC`/`0x4FAC5E`/`0x4FBCB5`, and Phobos hooks
+        `HouseClass::BeginProduction` at `0x4FA520`/`0x4FA612` inside that same range.
+        The P2b-1 run bears it out — most sampled resolves returned null, because most
+        of the time nothing is being produced. Substituting on null would hand out a
+        factory during every idle moment.
+     2. **`GetPrimaryFactory` does not know the TYPE**, only the category, so per-type
+        `AlwaysAvailable` gating is not expressible there regardless.
+     **Correct seat: the `FindFactory` epilogue `0x5F7A89`** (✔ a bare `ret 0x10` in a
+     nop-padded region, and ✔ unclaimed in the registry — Antares hooks the *entry*
+     `0x5F7900` and returns *to* this address, Ares' inner sites are dead under Antares).
+     That is the same "chain at the epilogue" pattern the encyclopedia prescribes for
+     `CanBuild` at `0x4F8361`, and it is the seat that asks the right question —
+     *"is there a factory that could build this?"* rather than *"what is producing now?"*
+     ⚠ One wrinkle: the type arrives in `ECX` and `ret 0x10` leaves it unrecoverable at
+     the epilogue, so it must be stashed by a cooperative `return 0` hook at `0x5F7900`
+     and read back — with a re-entrancy guard.
 4. **P3 — `Factory.Mode` (ask #10, §7c).** `Queue` and `Category` on top of P2;
    `Amplify`/`Inert` already exist. Must cooperate with Phobos's
    `UpdateNonMFBFactoryCounts` so a `Queue` building doesn't also amplify.
