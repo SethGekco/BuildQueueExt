@@ -1,6 +1,7 @@
 #include "ProductionProbe.h"
 #include "LimboOnComplete.h"
 #include "ChannelTable.h"
+#include "AlwaysAvailable.h"
 
 #include <FactoryClass.h>
 #include <HouseClass.h>
@@ -41,6 +42,7 @@ DEFINE_HOOK(0x668BF0, BQExt_RulesClass_Addition_ReadConfig, 0x5)
 	ProductionProbe::ReadConfig(pINI);
 	LimboOnComplete::ReadConfig(pINI);
 	ChannelTable::ReadConfig(pINI);
+	AlwaysAvailable::ReadConfig(pINI);
 
 	// ChannelTable's state is logged here rather than in its own ReadConfig so
 	// that one line reports every switch. The first shadow run could not be
