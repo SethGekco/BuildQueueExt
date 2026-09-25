@@ -5,10 +5,25 @@
 #include <SessionClass.h>
 
 #include <vector>
+#include <string>
 #include <Utilities/Debug.h>
 
 std::set<BuildingTypeClass*> LimboOnComplete::Types;
 static std::vector<FactoryClass*> PendingFactories;
+static bool PostLoopSeatProven = false;
+static int MarkCalls = 0;
+
+// One line per distinct rejection, once each. Every previous dead end in this
+// subsystem was "it silently did nothing", and each cost a playthrough to
+// localise. Logging the REASON is what turns the next run into an answer.
+static void RejectOnce(const char* stage, const char* why)
+{
+	static std::set<std::string> seen;
+	std::string key = std::string(stage) + "|" + why;
+
+	if (seen.insert(key).second)
+		Debug::Log("[BQExt] LimboOnComplete %s rejected: %s\n", stage, why);
+}
 
 void LimboOnComplete::ReadConfig(CCINIClass* pINI)
 {
@@ -113,18 +128,41 @@ bool LimboOnComplete::Create(BuildingTypeClass* pType, HouseClass* pOwner)
 
 void LimboOnComplete::MarkPending(FactoryClass* pFactory)
 {
-	if (Types.empty() || !pFactory)
+	if (Types.empty())
+	{
+		RejectOnce("mark", "no types tagged");
 		return;
+	}
+
+	if (!pFactory)
+		return;
+
+	++MarkCalls;
 
 	auto const pObject = pFactory->Object;
 
-	if (!pObject || pObject->WhatAmI() != BuildingClass::AbsID)
+	if (!pObject)
+	{
+		RejectOnce("mark", "factory has no object");
 		return;
+	}
+
+	if (pObject->WhatAmI() != BuildingClass::AbsID)
+		return;   // units/infantry reach here constantly; not worth logging
 
 	auto const pType = static_cast<BuildingTypeClass*>(pObject->GetTechnoType());
 
-	if (!IsEnabledFor(pType) || !pFactory->IsDone())
+	if (!IsEnabledFor(pType))
+		return;   // untagged buildings; expected
+
+	if (!pFactory->IsDone())
+	{
+		RejectOnce("mark", "IsDone() false at CompletedProduction entry");
 		return;
+	}
+
+	Debug::Log("[BQExt] LimboOnComplete QUEUED %s for deferred delivery\n",
+		pType->ID);
 
 	// Record only. Touching the factory here is what crashed the game.
 	for (auto const pQueued : PendingFactories)
@@ -136,6 +174,13 @@ void LimboOnComplete::MarkPending(FactoryClass* pFactory)
 
 void LimboOnComplete::ProcessPending()
 {
+	if (!PostLoopSeatProven)
+	{
+		PostLoopSeatProven = true;
+		Debug::Log("[BQExt] LimboOnComplete post-loop seat 0x55B6B3 is live"
+			" (marks so far %d)\n", MarkCalls);
+	}
+
 	if (PendingFactories.empty())
 		return;
 
@@ -160,17 +205,38 @@ void LimboOnComplete::ProcessPending()
 		}
 
 		if (!alive)
+		{
+			RejectOnce("deliver", "factory no longer in FactoryClass::Array");
 			continue;
+		}
 
 		auto const pObject = pFactory->Object;
 
-		if (!pObject || pObject->WhatAmI() != BuildingClass::AbsID)
+		if (!pObject)
+		{
+			RejectOnce("deliver", "object gone by post-loop");
 			continue;
+		}
+
+		if (pObject->WhatAmI() != BuildingClass::AbsID)
+		{
+			RejectOnce("deliver", "object is no longer a BuildingClass");
+			continue;
+		}
 
 		auto const pType = static_cast<BuildingTypeClass*>(pObject->GetTechnoType());
 
-		if (!IsEnabledFor(pType) || !pFactory->IsDone())
+		if (!IsEnabledFor(pType))
+		{
+			RejectOnce("deliver", "type no longer tagged");
 			continue;
+		}
+
+		if (!pFactory->IsDone())
+		{
+			RejectOnce("deliver", "IsDone() false at post-loop");
+			continue;
+		}
 
 		auto const pOwner = pFactory->Owner;
 
@@ -189,7 +255,10 @@ void LimboOnComplete::ProcessPending()
 		}
 
 		if (!Create(pType, pOwner))
+		{
+			RejectOnce("deliver", "Create() failed (BuildLimit or CreateObject)");
 			continue;
+		}
 
 		// Safe HERE, but not in the completion hook: the engine has finished
 		// with this factory for the frame.
