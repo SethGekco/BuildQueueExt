@@ -23,6 +23,7 @@ Scope:
 | 9 | Finished building → limbo, no placement | ✅ shipped, `LimboOnComplete=` (§7b) |
 | 10 | Buildings tagged to add queues / amplify vs own-queue | `Factory.Mode=` (§7c) |
 | 11 | Buildable with no ConYard / outside every build category | `AlwaysAvailable=` + `UseBuildQueue=` (§7e) |
+| 12 | AI factory contention — no-preempt + fair rotation (first AI-facing ask) | own the abandon chokepoint `0x4C9FF0` (§7f) |
 
 Addresses ✔ (confirmed) / ⚠ (unverified), per `SpawnExt/DESIGN.md` convention.
 
@@ -699,6 +700,118 @@ the only available lever and unusually clean ground.
 
 ---
 
+## 7f. Ask #12 — AI production fairness (no-preempt + fair rotation)
+
+**New scope (2026-09-24), and the first AI-facing ask in this doc.** Everything
+above is player/sidebar mechanics; this one is about the *AI's* use of its
+factories, and it lands here because BuildQueueExt already owns the production
+chokepoint (§7d, the `GetPrimaryFactory` authority; §10 P2b-1).
+
+### The problem, from a real log
+
+Rex's AI stack now runs several production-driving systems at once against **one
+or two war factories per house**: the vanilla engine's team-fill production,
+DoctrineExt's reactive production (reserve spend, garrison, arsenal refills),
+plus BuildQueueExt/BQExt itself. In an 18 MB test log the Soviet AI (Russians#1)
+had NAWEAP + NATECH, 100 k credits, default TechLevel 10 — every prerequisite
+for a Kirov — and **queued a ZEP zero times**, while the cheap Flak Track it *did*
+queue was **abandoned 324 times** (`Computer is abandoning production of Flak
+Track[HTK]`; 405 abandon lines total). No unit from the test teams ever reached
+the field even though their triggers fired 76 times.
+
+### Two reframes before any mechanism
+
+1. **"Build one at a time" is already the engine's behaviour.** A `FactoryClass`
+   advances exactly one object at a time per channel (§6). The systems are not
+   building in parallel and racing; they are **fighting over which demand holds
+   the single queue slot**, and the loser's in-progress unit is *thrown away*.
+   The enemy is **preemption thrash**, not parallelism.
+
+2. **Do NOT implement this as "each DLL takes turns" via a shared token.** Three
+   separately-injected DLLs have no shared state, their load order is not fixed,
+   and the *vanilla* team-fill producer is not a DLL you can teach to yield. A
+   cross-DLL cooperation token is the fragile design. The robust design is a
+   **single arbiter at the one seat every demand already passes through** — which
+   is exactly what BuildQueueExt is becoming.
+
+### Where the thrash actually happens (✔ disassembly-confirmed)
+
+The abandon is not a mysterious AI mood — it is a concrete call. Inside the
+factory section of `BuildingClass::Update` (the Antares/Ares/Phobos three-way
+region around `0x4502F4`), the decision-and-print path reaches:
+
+```
+0x4502C3   cmp [ecx+0x38], ebx        ; production-state test
+0x4502C6   je  0x4502D1
+0x4502C8   cmp byte [ecx+0x70], bl
+0x4502CB   je  0x4503CA               ; keep producing
+0x4502D1   call 0x4C9FF0              ; <-- FactoryClass::AbandonProduction
+0x4502D6   mov ecx,[esi+0x524]        ; caller reads on AFTER the abandon
+```
+
+So the "Computer is abandoning production of X" event **routes straight through
+`FactoryClass::AbandonProduction` at `0x4C9FF0`** — the function entry that
+**BuildQueueExt already hooks, record-only** (`Hooks.ProductionProbe.cpp:192`,
+returns 0; the contended body site `0x4CA07A` is deliberately left alone). We
+are already sitting on the exact chokepoint the fix needs. The P2b-1 lifecycle
+counters (`AbandonProduction 120/120`) are this same event, already being
+counted.
+
+### The two policies
+
+- **No-preempt (the high-value half).** When `AbandonProduction` is about to
+  fire on a factory whose current object is already past some progress
+  threshold (say `NoPreemptAbovePercent`, default ~25 %), and the abandon is a
+  *preemption* rather than a legitimate cancel, **let the unit finish** instead.
+  This alone converts the 324 abandoned Flak Tracks into ~completed Flak Tracks.
+- **Fair rotation (the "progressive" half Rex asked for).** When a factory
+  *does* free up, hand the next slot to the **next requester in round-robin**
+  rather than always re-serving the highest-priority demand. Each group's team
+  gets one unit built, then yields to the next group — so a base fills out
+  broadly and slowly instead of one greedy demand starving all others. This is
+  the literal "all groups slowly built progressively" behaviour.
+
+### The hard parts (⚠ honest unknowns)
+
+- **Distinguishing preemption-abandon from legitimate-abandon.** `AbandonProduction`
+  is also called on purpose — BuildQueueExt's own `LimboOnComplete` calls it at
+  `LimboOnComplete.cpp:265` for a completed item, and the player can cancel. The
+  veto must fire only for *preemption while incomplete*, never for a genuine
+  cancel or a completed-item cleanup. The distinguishing signals are on the
+  factory: object progress < 100 % **and** the abandon originated from the
+  `BuildingClass::Update` demand-switch path (`0x4502D1`) rather than a user/
+  logic cancel. A caller-return-address check at the `0x4C9FF0` entry is the
+  cheapest discriminator; verify it in the probe first.
+- **Vetoing safely at `0x4C9FF0`.** The caller at `0x4502D6` reads factory state
+  *after* the abandon and assumes it happened. A clean veto probably belongs
+  **upstream at the decision** (suppress reaching `0x4502D1`) rather than no-op-ing
+  the callee and leaving the caller with stale expectations — but that decision
+  site is in the contended `0x4502F4` region. Which of the two seats is safe is
+  a **probe question**, not settled here.
+- **Requester attribution for round-robin.** Vanilla team-fill demands carry no
+  "who asked" tag; the arbiter must attribute each demand to a requester (by
+  requesting team / priority band; DoctrineExt's demands can be tagged directly).
+  Without attribution "rotate between requesters" has no requesters to rotate.
+  This is the same identity problem as ask G / §7c's "N queues, one cameo", and
+  should share its answer.
+
+### Boundary
+
+This is a **BuildQueueExt** feature. AITriggerTypeExt, DoctrineExt and DossierExt
+stay dumb producers that just *submit* demands; BuildQueueExt arbitrates who the
+factory serves and refuses to throw away work in progress. Keeping the arbiter in
+one place is the whole point — it is why a shared token across the brains is the
+wrong shape and this seat is the right one.
+
+### Immediate mitigation already in the field (not a substitute)
+
+The AITriggerTypeExt escort test was patched to compete better under the *current*
+thrash — `Prebuild=yes`, `Priority=60`, `RequiredOwnerBuildings` prereq gates so
+teams only fire when the units are buildable. That helps one team win a slot; it
+does not stop the systemic abandonment, which is what this ask fixes.
+
+---
+
 ## 8. Sidebar prior art (merged SidebarExt)
 
 | PR | State | What |
@@ -835,6 +948,13 @@ turns three separate engine problems into three mappings.
    (which is N queues). The main sync surface.
 10. **P9 — asks D/E/F: exclusive-sidebar extensions**, layered on #1384.
 11. **P10 — ask #4 exit/output**, then SW-from-factory last.
+12. **P11 — ask #12 AI production fairness (§7f).** Rides on the `0x4C9FF0`
+    abandon hook BuildQueueExt already owns (record-only today). Order:
+    (a) extend the probe to log, per abandon, the object progress % and the
+    caller return address, to confirm preemption is separable from legitimate
+    cancel; (b) no-preempt veto once the discriminator is proven; (c) fair
+    rotation, which needs the requester-attribution decision (§11.10, shared
+    with ask G). No new address risk for (a)/(b) — the seat is held.
 
 Prerequisite predicates throughout are consumed from [[prerequisiteext-project]], not
 rebuilt.
@@ -864,3 +984,11 @@ rebuilt.
 8. **Hold modifier key** — shift is taken by queue-5.
 9. **Concurrency cap shape** (ask B, N fronts *within* a queue) — flat per-house vs
    per-category, noting naval is its own channel.
+10. **Requester attribution** (ask #12 fair rotation, §7f) — how to tag each
+    production demand with "who asked" when vanilla team-fill demands carry no
+    source. By requesting team pointer? by priority band? Shares the placement-
+    identity problem of ask G / §7c. Until this is decided, only the no-preempt
+    half of §7f is buildable; fair rotation is blocked on it.
+11. **No-preempt veto seat** (§7f) — veto at the `0x4C9FF0` callee entry (owned,
+    but the caller at `0x4502D6` reads state assuming the abandon happened) vs
+    upstream at the decision in the contended `0x4502F4` region. A probe question.
