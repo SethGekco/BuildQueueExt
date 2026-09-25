@@ -10,6 +10,9 @@
 
 std::set<TechnoTypeClass*> AlwaysAvailable::Types;
 bool AlwaysAvailable::ProbeEnabled = false;
+bool AlwaysAvailable::Enabled = false;
+int AlwaysAvailable::Substitutions = 0;
+int AlwaysAvailable::NoStandIn = 0;
 int AlwaysAvailable::Calls = 0;
 int AlwaysAvailable::TypeRecovered = 0;
 int AlwaysAvailable::TypeLost = 0;
@@ -24,6 +27,8 @@ void AlwaysAvailable::ReadGlobalConfig(CCINIClass* pINI)
 	// once per INI and a literal would switch this off on the map pass.
 	ProbeEnabled = pINI->ReadBool(
 		"BuildQueueExt", "AlwaysAvailable.Probe", ProbeEnabled);
+	Enabled = pINI->ReadBool(
+		"BuildQueueExt", "AlwaysAvailable.Enabled", Enabled);
 }
 
 void AlwaysAvailable::ReadTypeConfig(CCINIClass* pINI)
@@ -131,4 +136,72 @@ void AlwaysAvailable::ProbeEpilogue(
 			" (house=%p) -- no factory, type is tagged\n",
 			pType->ID, pHouse);
 	}
+}
+
+BuildingClass* AlwaysAvailable::FindStandIn(HouseClass* pHouse)
+{
+	if (!pHouse)
+		return nullptr;
+
+	BuildingClass* pFallback = nullptr;
+
+	for (auto const pBld : pHouse->Buildings)
+	{
+		// Mirror HasFactory's own exclusions. Handing back something the engine
+		// would itself have skipped is how a substitution turns into a crash
+		// later, in a frame with no obvious connection to this one.
+		if (!pBld || !pBld->IsAlive || pBld->InLimbo)
+			continue;
+
+		if (pBld->GetCurrentMission() == Mission::Selling
+			|| pBld->QueuedMission == Mission::Selling)
+		{
+			continue;
+		}
+
+		// Prefer a powered, active building: callers ask the returned factory
+		// whether it has power, and an offline stand-in would report the type
+		// as unbuildable for a reason the modder never configured.
+		if (pBld->HasPower && !pBld->Deactivated)
+			return pBld;
+
+		if (!pFallback)
+			pFallback = pBld;
+	}
+
+	return pFallback;
+}
+
+BuildingClass* AlwaysAvailable::Resolve(
+	void* ecx, BuildingClass* pVerdict, HouseClass* pHouse)
+{
+	// Never override a real answer -- only fill in a null one.
+	if (!Enabled || pVerdict || !pHouse)
+		return pVerdict;
+
+	auto const pType = IdentifyType(ecx);
+
+	if (!pType || !IsEnabledFor(pType))
+		return pVerdict;
+
+	auto const pStandIn = FindStandIn(pHouse);
+
+	if (!pStandIn)
+	{
+		// A house with no buildings at all. Nothing to stand in, and inventing
+		// something is exactly what this option exists to avoid.
+		++NoStandIn;
+		return pVerdict;
+	}
+
+	if (++Substitutions == 1 || Substitutions % 500 == 0)
+	{
+		Debug::Log("[BQExt] AlwaysAvailable SUBSTITUTE #%d %s -> stand-in %s"
+			" (house=%p)  [no-stand-in %d]\n",
+			Substitutions, pType->ID,
+			pStandIn->Type ? pStandIn->Type->ID : "(?)",
+			pHouse, NoStandIn);
+	}
+
+	return pStandIn;
 }

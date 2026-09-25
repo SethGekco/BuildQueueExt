@@ -32,7 +32,10 @@
 //   [ESP+0xC]  = bool requireCanBuild
 //   [ESP+0x10] = HouseClass*
 //
-// Nothing is substituted yet and EAX is not written. Strictly diagnostic.
+// EAX IS WRITTEN when AlwaysAvailable.Enabled=yes and the type is tagged and
+// the engine found nothing. Returning 0 lets Syringe's stub replay the stolen
+// `ret 0x10`, which hands back whatever EAX holds -- so writing EAX here and
+// returning 0 is the substitution.
 
 DEFINE_HOOK(0x5F7A89, BQExt_ObjectTypeClass_FindFactory_Epilogue, 0x5)
 {
@@ -41,6 +44,11 @@ DEFINE_HOOK(0x5F7A89, BQExt_ObjectTypeClass_FindFactory_Epilogue, 0x5)
 	GET_STACK(HouseClass*, pHouse, 0x10);
 
 	AlwaysAvailable::ProbeEpilogue(ecx, pVerdict, pHouse);
+
+	// Resolve returns pVerdict unchanged unless this is a tagged type with no
+	// factory, so the common path writes EAX back to the value it already had.
+	if (auto const pResolved = AlwaysAvailable::Resolve(ecx, pVerdict, pHouse))
+		R->EAX(pResolved);
 
 	return 0;
 }

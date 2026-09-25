@@ -55,6 +55,10 @@ public:
 	// [BuildQueueExt] AlwaysAvailable.Probe=yes — the diagnostic below.
 	static bool ProbeEnabled;
 
+	// [BuildQueueExt] AlwaysAvailable.Enabled=yes — actually substitute.
+	// Off by default so the behaviour reverts with one INI key, no redeploy.
+	static bool Enabled;
+
 	// Split deliberately: the GLOBAL switch reads fine at the Read_File entry,
 	// but PER-TYPE tags must wait for the tail, where the TechnoType arrays
 	// actually exist. See Hooks.ProductionProbe.cpp for the full account.
@@ -74,9 +78,33 @@ public:
 	static void ProbeEpilogue(void* ecx, BuildingClass* pVerdict,
 		HouseClass* pHouse);
 
+	// THE STAND-IN. Returns the factory the engine should report: normally
+	// pVerdict unchanged, but for a tagged type whose verdict is null, a
+	// building the house already owns.
+	//
+	// Deliberately adds NOTHING to the world. Cloning is per-BUILDING
+	// (BuildingClass::Update, Antares 0x4502F4), so a substitution that creates
+	// no building cannot add a production stream and cannot perturb the AI
+	// multi-factory cloning that mods rely on. That is why this option was
+	// chosen over delivering a limbo ConYard — and Phobos independently warns
+	// that limbo buildings must never be factories, since they have no physical
+	// presence.
+	static BuildingClass* Resolve(void* ecx, BuildingClass* pVerdict,
+		HouseClass* pHouse);
+
+private:
+	// First usable building the house owns, preferring a powered one. Mirrors
+	// HasFactory's own exclusions (limbo, being sold) so we never hand back
+	// something the engine would itself have skipped.
+	static BuildingClass* FindStandIn(HouseClass* pHouse);
+
+public:
+
 private:
 	static int Calls;
 	static int TypeRecovered;
 	static int TypeLost;
 	static int NullVerdicts;
+	static int Substitutions;
+	static int NoStandIn;
 };
