@@ -36,9 +36,19 @@ public:
 
 	static bool IsEnabledFor(BuildingTypeClass* pType);
 
-	// Returns true if it consumed the completed item (caller should expect the
-	// factory to have been cleared).
-	static bool TryDeliver(FactoryClass* pFactory);
+	// ⚠ DEFERRED, and it must stay that way.
+	//
+	// The first version delivered inline from the CompletedProduction hook,
+	// calling AbandonProduction() and then returning 0 so the vanilla body ran
+	// -- on a factory whose Object had just been nulled. That body walks on into
+	// HouseClass::UnitFromFactory and dereferences it: FATAL, C0000005 with
+	// EIP=0 returning into 0x4FB2B3. Confirmed in-game 2026-09-24.
+	//
+	// So MarkPending only records; nothing is created or abandoned until
+	// ProcessPending runs at the post-loop seat, by which time the engine has
+	// finished with the factory.
+	static void MarkPending(FactoryClass* pFactory);
+	static void ProcessPending();
 
 private:
 	// Registers a fresh instance with the house without placing it.

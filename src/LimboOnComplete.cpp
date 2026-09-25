@@ -3,9 +3,12 @@
 #include <BuildingClass.h>
 #include <CCINIClass.h>
 #include <SessionClass.h>
+
+#include <vector>
 #include <Utilities/Debug.h>
 
 std::set<BuildingTypeClass*> LimboOnComplete::Types;
+static std::vector<FactoryClass*> PendingFactories;
 
 void LimboOnComplete::ReadConfig(CCINIClass* pINI)
 {
@@ -108,55 +111,91 @@ bool LimboOnComplete::Create(BuildingTypeClass* pType, HouseClass* pOwner)
 	return true;
 }
 
-bool LimboOnComplete::TryDeliver(FactoryClass* pFactory)
+void LimboOnComplete::MarkPending(FactoryClass* pFactory)
 {
 	if (Types.empty() || !pFactory)
-		return false;
+		return;
 
 	auto const pObject = pFactory->Object;
 
 	if (!pObject || pObject->WhatAmI() != BuildingClass::AbsID)
-		return false;
+		return;
 
 	auto const pType = static_cast<BuildingTypeClass*>(pObject->GetTechnoType());
 
-	if (!IsEnabledFor(pType))
-		return false;
+	if (!IsEnabledFor(pType) || !pFactory->IsDone())
+		return;
 
-	// Only act once the item is genuinely finished, otherwise this would
-	// deliver a building the player has not paid off yet.
-	if (!pFactory->IsDone())
-		return false;
+	// Record only. Touching the factory here is what crashed the game.
+	for (auto const pQueued : PendingFactories)
+		if (pQueued == pFactory)
+			return;
 
-	auto const pOwner = pFactory->Owner;
+	PendingFactories.push_back(pFactory);
+}
 
-	if (!pOwner)
-		return false;
+void LimboOnComplete::ProcessPending()
+{
+	if (PendingFactories.empty())
+		return;
 
-	// The no-refund assumption: Balance is "credits the house still owes us for
-	// building this", so a completed item has Balance 0 and AbandonProduction
-	// below refunds nothing. The P0 probe logs Bal= at CompletedProduction
-	// precisely so this can be confirmed rather than assumed -- if the log ever
-	// shows a non-zero balance on a finished item, this path grants free money.
-	if (pFactory->Balance != 0)
+	auto const pending = PendingFactories;
+	PendingFactories.clear();
+
+	for (auto const pFactory : pending)
 	{
-		Debug::Log("[BQExt] LimboOnComplete ABORT %s: balance %d != 0 on a"
-			" finished item; delivering would refund credits\n",
-			pType->ID, pFactory->Balance);
-		return false;
+		// The factory may have been destroyed since it was queued -- the player
+		// can sell or lose the producing building between frames. Validate by
+		// membership in the live array; a stale pointer here would be a
+		// use-after-free in the middle of the logic loop.
+		bool alive = false;
+
+		for (auto const pLive : FactoryClass::Array)
+		{
+			if (pLive == pFactory)
+			{
+				alive = true;
+				break;
+			}
+		}
+
+		if (!alive)
+			continue;
+
+		auto const pObject = pFactory->Object;
+
+		if (!pObject || pObject->WhatAmI() != BuildingClass::AbsID)
+			continue;
+
+		auto const pType = static_cast<BuildingTypeClass*>(pObject->GetTechnoType());
+
+		if (!IsEnabledFor(pType) || !pFactory->IsDone())
+			continue;
+
+		auto const pOwner = pFactory->Owner;
+
+		if (!pOwner)
+			continue;
+
+		// The no-refund assumption: Balance is "credits the house still owes us
+		// for building this", so a completed item has Balance 0 and the abandon
+		// below refunds nothing. Measured at 0/0 across 44 completions.
+		if (pFactory->Balance != 0)
+		{
+			Debug::Log("[BQExt] LimboOnComplete ABORT %s: balance %d != 0 on a"
+				" finished item; delivering would refund credits\n",
+				pType->ID, pFactory->Balance);
+			continue;
+		}
+
+		if (!Create(pType, pOwner))
+			continue;
+
+		// Safe HERE, but not in the completion hook: the engine has finished
+		// with this factory for the frame.
+		pFactory->AbandonProduction();
+
+		Debug::Log("[BQExt] LimboOnComplete delivered %s to house %s\n",
+			pType->ID, pOwner->PlainName);
 	}
-
-	if (!Create(pType, pOwner))
-		return false;
-
-	// Clear the factory so the queue advances and the cameo stops showing a
-	// ready item. AbandonProduction is the engine's own teardown: it also
-	// releases the house's channel slot via the Antares/Phobos hooks at
-	// 0x4CA07A, which a manual pointer clear would not.
-	pFactory->AbandonProduction();
-
-	Debug::Log("[BQExt] LimboOnComplete delivered %s to house %s\n",
-		pType->ID, pOwner->PlainName);
-
-	return true;
 }

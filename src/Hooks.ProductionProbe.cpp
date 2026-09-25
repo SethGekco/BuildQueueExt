@@ -172,10 +172,11 @@ DEFINE_HOOK(0x4CA1A0, BQExt_FactoryClass_CompletedProduction, 0x5)
 
 	ProductionProbe::Report("CompletedProduction", pThis);
 
-	// Self-limiting: TryDeliver abandons the production it consumes, so this
-	// cannot re-fire for the same item on the next update. No-op unless the
-	// finished type is flagged LimboOnComplete=yes.
-	LimboOnComplete::TryDeliver(pThis);
+	// RECORD ONLY. Delivering here -- creating the building and abandoning the
+	// production -- pulled the factory out from under the vanilla body that runs
+	// next, which then died in UnitFromFactory. The work happens at the
+	// post-loop seat instead. See LimboOnComplete.h.
+	LimboOnComplete::MarkPending(pThis);
 
 	return 0;
 }
@@ -214,6 +215,21 @@ DEFINE_HOOK(0x4C9C70, BQExt_FactoryClass_DemandProduction, 0x5)
 		ProductionProbe::ReportHouseChannels(pOwner, "DemandProduction");
 	else
 		ProductionProbe::Report("DemandProduction", pThis);
+
+	return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Post-loop seat for deferred work.
+//
+// 0x55B6B3 is LogicClass::AI's tail, after the per-object update loop has run
+// (Phobos calls it LogicClass_AI_After and chains cooperatively there). By this
+// point the engine has finished with every factory for the frame, so it is safe
+// to abandon a completed production -- which it emphatically is NOT inside the
+// completion hook itself.
+DEFINE_HOOK(0x55B6B3, BQExt_LogicClass_AI_After_ProcessPending, 0x5)
+{
+	LimboOnComplete::ProcessPending();
 
 	return 0;
 }
