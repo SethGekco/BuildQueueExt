@@ -587,8 +587,52 @@ The modder's own observations match the two-halves model exactly:
    a desync by construction. It would have to be created deterministically (scenario
    start / house init) and only when the mod actually uses the tag.
 
-Option 2 looks right, with eager deterministic creation. Either way the exit-cell problem
-from §7e stands, which is why `LimboOnComplete` remains the natural partner.
+### ✅ Fork decided 2026-09-23: **stand-in** (option 1)
+
+Two reasons, one of which is documented upstream.
+
+**1. AI multi-factory cloning.** Cloning — one unit produced *per* owned factory — is not
+a bug to dodge; it is the default, and mods use it deliberately. The gate is
+`BuildingClass::Update`'s factory section (✔ Antares `0x4502F4`):
+```cpp
+if (H->Production && !RulesExt::Global()->AllowParallelAIQueues) { …restrict… }
+```
+`AllowParallelAIQueues` defaults **true**, so the restriction never engages and every
+producing building the house owns advances its own production. **Cloning is
+per-BUILDING.** Hence:
+
+| | Adds a `BuildingClass`? | Effect on cloning |
+|---|---|---|
+| **Stand-in** | **No** — only changes a query's answer | **None, by construction** |
+| **Limbo ConYard** | **Yes** (`LimboCreate` → `Buildings.AddItem`) | ⚠ could add a production stream per limbo factory |
+
+**2. Phobos documents that limbo buildings must not be factories.** Their
+`LimboDelivery` note lists only FactoryPlant, OrePurifier, SpySat, KeepAlive,
+`Prerequisite*` and `SuperWeapon*` as confirmed-working, and warns:
+
+> *"Limbo Delivered buildings don't exist physically! This means they should never have
+> enabled mechanics that require interaction with the game world (i.e. **factories**,
+> cloning vats, service depots, helipads)."*
+
+### ⚠ But read the *reason*, because it is narrower than the warning
+
+The blocker is **physical output**, not queueing. A unit factory must eject at an exit
+cell; a ConYard anchors placement; a depot needs units to drive onto it. All of those
+need a map position. **Nothing in that list is about advancing a queue.**
+
+Which means the interesting case is not ruled out:
+
+> **A limbo factory producing things that need no physical exit.** `LimboOnComplete`
+> (§7b) removes the placement step for *buildings* — so a limbo factory whose output is
+> itself limbo-delivered never needs a cell. "Limbo factory builds units" stays blocked
+> by the exit problem; "limbo factory grants buildings" does not obviously.
+
+⚠ Still unverified either way, and **the undocumented half is whether a limbo factory is
+*inert* or *half-works*** — Phobos says what modders *should not* do, not what the engine
+*does*. A limbo factory that silently joins the per-building production loop would be the
+bad outcome. The armed GAWEAP test answers exactly that, and is now a two-minute check
+rather than a playthrough: build one War Factory, look at the Vehicles tab, check the
+probe's `total live factories for this house`.
 
 ### Scope call
 
