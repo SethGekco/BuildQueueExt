@@ -1,3 +1,44 @@
+> ## ⭐ THE BINDING CONSTRAINT IS BROKEN — tested in-game 2026-09-27 (second run)
+>
+> PrerequisiteExt's `HANDOFF-AlwaysAvailable.md` carries a **⛔ NOT SOLVED** banner
+> whose core claim is:
+>
+> > *"The engine stops calling `CanBuild` for a house's BuildingTypes once it has no
+> > ConYard. The promote is never asked for. No return value at that seat can help."*
+>
+> That was true, and it was the real blocker. **It is no longer true.** With the
+> cameo pushed (step a), the engine asks again:
+>
+> ```
+> frame 7739: GAPILL house 0 FACTORY ABSENT -> NoFactory containers now ACTIVE
+> frame 7982: GAPILL house 0 -> BLOCKED (engine said unbuildable)
+>   T25_NoConYard: gate=active test=FAIL
+> ```
+>
+> House 0 is the human player, and the ConYard was gone. Compare the earlier run,
+> which had **zero** activity for house 0 across ~784,000 subsequent lines. Pushing
+> the cameo does not just make it visible — **it puts the type back into the set the
+> sidebar evaluates**, which restores the `CanBuild` call the promote needs.
+>
+> So the four-step chain is sound and step (b) is reachable. The container simply
+> **refused for its own stated reason**:
+>
+> ```
+> need scope=Owner GAPILE -> count=0 (ownedNow=0 present=0 inProgress=0)
+> ```
+>
+> The Barracks had been destroyed before the ConYard went (the player was losing;
+> the log ends `Brutal Enemy: Winner`). `Prerequisite=GAPILE` was correctly unmet,
+> so the promote correctly did not fire. **The run proved nothing about the
+> mechanism** — the fixture was simply unreachable. Retest with `Prerequisite=GAPOWR`,
+> which is built first and lost last.
+>
+> ⚠ **Fixture-design flaw, same family as PrereqExt's own #1/#2:** a test whose
+> condition depends on a building surviving a match you are losing. Pick a condition
+> that holds for the whole game.
+
+---
+
 > ## ✅ STEP (a) WORKS — tested in-game 2026-09-27
 >
 > `AddCameo` **returned TRUE** and the GAPILL cameo **appeared**. The experiment in
