@@ -104,9 +104,16 @@ bool AlwaysAvailable::IsSpectating(HouseClass* pHouse)
 	// Defeated is included deliberately. The modder saw the cameo survive their
 	// own game-over: once defeated you are, in effect, a spectator, and the
 	// normal sidebar path would never have offered it.
-	return pHouse->IsObserver()
-		|| pHouse->IsInitiallyObserver()
-		|| pHouse->Defeated;
+	//
+	// ⚠ IsInitiallyObserver() IS DELIBERATELY NOT USED. It is
+	// `IsHumanPlayer && GetSpawnPosition() == -1`, and GetSpawnPosition scans
+	// ScenarioClass::HouseIndices -- a MULTIPLAYER LOBBY array. In skirmish the
+	// human player is not necessarily in it, so it returns -1 and the ordinary
+	// player is misclassified as an observer. Including it silently disabled
+	// the whole substitution path for the human on its first armed run: the
+	// probe kept logging WOULD SUBSTITUTE while Resolve returned early every
+	// time. IsObserver() is `this == Observer`, which is unambiguous.
+	return pHouse->IsObserver() || pHouse->Defeated;
 }
 
 bool AlwaysAvailable::IsEnabledFor(TechnoTypeClass* pType)
@@ -232,8 +239,24 @@ BuildingClass* AlwaysAvailable::Resolve(
 	// The ask is "can spectators BUILD it", so the gate belongs here as well as
 	// on the cameo push. Without this, a defeated player whose cameo is still
 	// on screen from before the suppression kicked in could still click it.
+	//
+	// LOGGED, not silent. The first version of this gate rejected the human
+	// player every frame and said nothing, so the log showed WOULD SUBSTITUTE
+	// forever with no SUBSTITUTE and no reason -- indistinguishable from the
+	// hook not running. Every early return on this path now names itself.
 	if (IsSpectating(pHouse) && !AllowsSpectators(pType))
+	{
+		if (++SpectatorSuppressed == 1 || SpectatorSuppressed % 500 == 0)
+		{
+			Debug::Log("[BQExt] AlwaysAvailable REFUSE-BUILD #%d %s --"
+				" house is spectating (observer=%d defeated=%d)\n",
+				SpectatorSuppressed, pType->ID,
+				pHouse->IsObserver() ? 1 : 0,
+				pHouse->Defeated ? 1 : 0);
+		}
+
 		return pVerdict;
+	}
 
 	auto const pStandIn = FindStandIn(pHouse);
 
@@ -241,7 +264,12 @@ BuildingClass* AlwaysAvailable::Resolve(
 	{
 		// A house with no buildings at all. Nothing to stand in, and inventing
 		// something is exactly what this option exists to avoid.
-		++NoStandIn;
+		if (++NoStandIn == 1 || NoStandIn % 500 == 0)
+		{
+			Debug::Log("[BQExt] AlwaysAvailable NO-STAND-IN #%d %s --"
+				" house owns no usable building\n", NoStandIn, pType->ID);
+		}
+
 		return pVerdict;
 	}
 
