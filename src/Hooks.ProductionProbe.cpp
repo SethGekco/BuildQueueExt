@@ -2,6 +2,7 @@
 #include "LimboOnComplete.h"
 #include "ChannelTable.h"
 #include "AlwaysAvailable.h"
+#include "ExtraQueues.h"
 
 #include <FactoryClass.h>
 #include <HouseClass.h>
@@ -44,6 +45,7 @@ DEFINE_HOOK(0x668BF0, BQExt_RulesClass_Addition_ReadConfig, 0x5)
 	ProductionProbe::ReadConfig(pINI);
 	ChannelTable::ReadConfig(pINI);
 	AlwaysAvailable::ReadGlobalConfig(pINI);
+	ExtraQueues::ReadGlobalConfig(pINI);
 
 	// ChannelTable's state is logged here rather than in its own ReadConfig so
 	// that one line reports every switch. The first shadow run could not be
@@ -89,6 +91,7 @@ DEFINE_HOOK(0x668F6A, BQExt_RulesClass_ReadFile_Tail_ReadTypeTags, 0x5)
 
 	LimboOnComplete::ReadConfig(pINI);
 	AlwaysAvailable::ReadTypeConfig(pINI);
+	ExtraQueues::ReadTypeConfig(pINI);
 
 	return 0;
 }
@@ -230,6 +233,9 @@ DEFINE_HOOK(0x4C9C70, BQExt_FactoryClass_DemandProduction, 0x5)
 DEFINE_HOOK(0x55B6B3, BQExt_LogicClass_AI_After_ProcessPending, 0x5)
 {
 	LimboOnComplete::ProcessPending();
+
+	// P-a: accounting only -- reports slot-count transitions, changes nothing.
+	ExtraQueues::ReportChanges();
 
 	return 0;
 }

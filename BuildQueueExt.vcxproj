@@ -33,6 +33,7 @@
     <ClCompile Include="src\LimboOnComplete.cpp" />
     <ClCompile Include="src\ChannelTable.cpp" />
     <ClCompile Include="src\AlwaysAvailable.cpp" />
+    <ClCompile Include="src\ExtraQueues.cpp" />
     <ClCompile Include="src\Hooks.ProductionProbe.cpp" />
     <ClCompile Include="src\Hooks.ChannelTable.cpp" />
     <ClCompile Include="src\Hooks.AlwaysAvailable.cpp" />
@@ -45,6 +46,7 @@
     <ClInclude Include="src\LimboOnComplete.h" />
     <ClInclude Include="src\ChannelTable.h" />
     <ClInclude Include="src\AlwaysAvailable.h" />
+    <ClInclude Include="src\ExtraQueues.h" />
   </ItemGroup>
 
   <PropertyGroup Label="Globals">
