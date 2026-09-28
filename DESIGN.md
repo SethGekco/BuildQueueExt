@@ -311,6 +311,47 @@ click at the `0x6AB773` idiom, dispatched as an `EventClass` (§4).
 
 ## 6. Asks #2/#3 — concurrency
 
+### ✅ MEASURED 2026-09-24: the limit is ONE FACTORY PER CHANNEL, for everyone
+
+109 `DemandProduction` channel dumps from a live skirmish, human and AI:
+
+| | dumps | max concurrent factories | dumps with **2+ of the same `AbstractType`** |
+|---|---|---|---|
+| Human | 3 | — | **0** |
+| AI | 106 | 3 | **0** |
+
+**Never two factories of the same type, for anyone.** The AI's apparent advantage is that
+it drives *more channels at once* (a building **and** infantry **and** a vehicle), not
+more factories per channel. A human can already do that too — what neither can do is
+build two buildings, or two vehicles, simultaneously.
+
+So the constraint is exactly the per-channel primary designation (§7d), and it is
+uniform. This also reframes AI "cloning": since no house ever holds two same-type
+factories, cloning cannot be two concurrent *productions*. It has to be one production
+whose **output is duplicated at ejection** — which fits the kick-out cluster
+(`UnitFromFactory`, `0x444119`/`0x444131`/`0x44531F`/`0x443CCA`) rather than the
+production loop. ⚠ Not yet confirmed directly, but it follows from the measurement and
+it means lifting the production limit should not disturb cloning.
+
+### The two ways to lift it, and why neither is free
+
+| | Approach | Blocker |
+|---|---|---|
+| **(a) N fronts in one `FactoryClass`** | one factory advances several objects | `FactoryClass::Object` is a **single pointer** (✔ `YRpp/FactoryClass.h`). N fronts needs our own parallel state, and then one cameo has N progress values. |
+| **(b) N `FactoryClass` per channel** | several factories, same type | `GetPrimaryFactory` returns **one** and has no queue index (§P2b) — the engine has no vocabulary to ask for the second, so nothing would drive it. |
+
+Both bottom out in the same place: **the engine models "what this house is building in
+category X" as a single slot, at every layer** — storage (`Primary_For*`), query
+(`GetPrimaryFactory`), and object (`FactoryClass::Object`). That is why this ask is the
+expensive one, and why the earlier plan to deliver it purely by routing was optimistic.
+
+> **Consequence for `Factory.Mode=Queue` (§7c):** it is option (b), and it therefore
+> needs the *consumer* side too — something must advance and display the extra queues,
+> because the engine will never ask for them. That is the same placement-identity work as
+> ask G, now confirmed as a hard dependency rather than a shared inconvenience.
+
+
+
 Antares at `0x4502F4` restricts a house to one active factory per channel **only** when
 `H->Production && !AllowParallelAIQueues`. `AllowParallelAIQueues` defaults **true**, and
 `H->Production` is the AI flag (✔ `YRpp/HouseClass.h:823`: *"AI production has begun"*).
