@@ -52,6 +52,25 @@ public:
 	// epilogue is proven to carry the type.
 	static std::set<TechnoTypeClass*> Types;
 
+	// [SOMEBUILDING] AlwaysAvailable.Spectators=yes — DEFAULT NO.
+	//
+	// Observed in-game: a pushed cameo persists after the player is defeated,
+	// and a true observer slot would get it too. Both are houses that are not
+	// supposed to be interacting with the game at all, and the push is what put
+	// the cameo in front of them -- the normal path would never have, because a
+	// defeated house has no ConYard driving UpdateConstructionOptions. So this
+	// is our mess to clean up, not a pre-existing engine quirk.
+	//
+	// Gated per TYPE rather than globally because "an observer may build this"
+	// is a property of the building (a spectator-camera beacon might want it),
+	// not of the feature.
+	static std::set<TechnoTypeClass*> SpectatorTypes;
+	static bool AllowsSpectators(TechnoTypeClass* pType);
+
+	// True for a house that should not be receiving pushed cameos: a real
+	// observer slot, a human who started as one, or a defeated player.
+	static bool IsSpectating(HouseClass* pHouse);
+
 	// [BuildQueueExt] AlwaysAvailable.Probe=yes — the diagnostic below.
 	static bool ProbeEnabled;
 

@@ -10,6 +10,8 @@
 #include <Utilities/Debug.h>
 
 std::set<TechnoTypeClass*> AlwaysAvailable::Types;
+std::set<TechnoTypeClass*> AlwaysAvailable::SpectatorTypes;
+static int SpectatorSuppressed = 0;
 bool AlwaysAvailable::ProbeEnabled = false;
 bool AlwaysAvailable::Enabled = false;
 bool AlwaysAvailable::PushCameoEnabled = false;
@@ -55,6 +57,24 @@ void AlwaysAvailable::ReadTypeConfig(CCINIClass* pINI)
 		if (!pType)
 			continue;
 
+		// Read unconditionally rather than only for tagged types: the two keys
+		// are independent INI reads, and making one depend on the other's
+		// current state would make the result depend on pass order.
+		bool const specWas = SpectatorTypes.find(pType) != SpectatorTypes.end();
+		bool const specNow =
+			pINI->ReadBool(pType->ID, "AlwaysAvailable.Spectators", specWas);
+
+		if (specNow != specWas)
+		{
+			if (specNow)
+				SpectatorTypes.insert(pType);
+			else
+				SpectatorTypes.erase(pType);
+
+			Debug::Log("[BQExt] AlwaysAvailable.Spectators %s: %s\n",
+				specNow ? "allowed" : "denied", pType->ID);
+		}
+
 		bool const was = Types.find(pType) != Types.end();
 		bool const now = pINI->ReadBool(pType->ID, "AlwaysAvailable", was);
 
@@ -69,6 +89,24 @@ void AlwaysAvailable::ReadTypeConfig(CCINIClass* pINI)
 		Debug::Log("[BQExt] AlwaysAvailable %s: %s\n",
 			now ? "enabled" : "disabled", pType->ID);
 	}
+}
+
+bool AlwaysAvailable::AllowsSpectators(TechnoTypeClass* pType)
+{
+	return pType && SpectatorTypes.find(pType) != SpectatorTypes.end();
+}
+
+bool AlwaysAvailable::IsSpectating(HouseClass* pHouse)
+{
+	if (!pHouse)
+		return false;
+
+	// Defeated is included deliberately. The modder saw the cameo survive their
+	// own game-over: once defeated you are, in effect, a spectator, and the
+	// normal sidebar path would never have offered it.
+	return pHouse->IsObserver()
+		|| pHouse->IsInitiallyObserver()
+		|| pHouse->Defeated;
 }
 
 bool AlwaysAvailable::IsEnabledFor(TechnoTypeClass* pType)
@@ -191,6 +229,12 @@ BuildingClass* AlwaysAvailable::Resolve(
 	if (!pType || !IsEnabledFor(pType))
 		return pVerdict;
 
+	// The ask is "can spectators BUILD it", so the gate belongs here as well as
+	// on the cameo push. Without this, a defeated player whose cameo is still
+	// on screen from before the suppression kicked in could still click it.
+	if (IsSpectating(pHouse) && !AllowsSpectators(pType))
+		return pVerdict;
+
 	auto const pStandIn = FindStandIn(pHouse);
 
 	if (!pStandIn)
@@ -271,10 +315,32 @@ void AlwaysAvailable::PushCameos()
 	if (HouseHasUsableFactory(pHouse, AbstractType::BuildingType))
 		return;
 
+	// Computed once per pass, not per type: it is a property of the house.
+	bool const spectating = IsSpectating(pHouse);
+
 	for (auto const pTechnoType : Types)
 	{
 		// Types is populated only from BuildingTypeClass::Array, so this is safe.
 		auto const pType = static_cast<BuildingTypeClass*>(pTechnoType);
+
+		if (spectating && !AllowsSpectators(pType))
+		{
+			// Note this does NOT remove a cameo pushed before the house was
+			// defeated -- AddCameo has no inverse we use here. It stops the
+			// push from re-asserting it, which is enough for the observer case
+			// (never pushed at all) but leaves a defeated player's existing
+			// cameo on screen until the strip is next rebuilt.
+			if (++SpectatorSuppressed == 1 || SpectatorSuppressed % 500 == 0)
+			{
+				Debug::Log("[BQExt] AlwaysAvailable SUPPRESS #%d %s --"
+					" house is spectating (observer=%d defeated=%d)\n",
+					SpectatorSuppressed, pType->ID,
+					pHouse->IsObserver() ? 1 : 0,
+					pHouse->Defeated ? 1 : 0);
+			}
+
+			continue;
+		}
 
 		++PushAttempts;
 
