@@ -6,11 +6,16 @@
 #include <InfantryTypeClass.h>
 #include <UnitTypeClass.h>
 #include <AircraftTypeClass.h>
+#include <MouseClass.h>
 #include <Utilities/Debug.h>
 
 std::set<TechnoTypeClass*> AlwaysAvailable::Types;
 bool AlwaysAvailable::ProbeEnabled = false;
 bool AlwaysAvailable::Enabled = false;
+bool AlwaysAvailable::PushCameoEnabled = false;
+static int PushFrame = 0;
+static int PushAttempts = 0;
+static int PushAccepted = 0;
 int AlwaysAvailable::Substitutions = 0;
 int AlwaysAvailable::NoStandIn = 0;
 int AlwaysAvailable::Calls = 0;
@@ -29,6 +34,8 @@ void AlwaysAvailable::ReadGlobalConfig(CCINIClass* pINI)
 		"BuildQueueExt", "AlwaysAvailable.Probe", ProbeEnabled);
 	Enabled = pINI->ReadBool(
 		"BuildQueueExt", "AlwaysAvailable.Enabled", Enabled);
+	PushCameoEnabled = pINI->ReadBool(
+		"BuildQueueExt", "AlwaysAvailable.PushCameo", PushCameoEnabled);
 }
 
 void AlwaysAvailable::ReadTypeConfig(CCINIClass* pINI)
@@ -204,4 +211,87 @@ BuildingClass* AlwaysAvailable::Resolve(
 	}
 
 	return pStandIn;
+}
+
+bool AlwaysAvailable::HouseHasUsableFactory(
+	HouseClass* pHouse, AbstractType produces)
+{
+	if (!pHouse)
+		return false;
+
+	for (auto const pBld : pHouse->Buildings)
+	{
+		if (!pBld || !pBld->IsAlive || pBld->InLimbo)
+			continue;
+
+		if (pBld->GetCurrentMission() == Mission::Selling
+			|| pBld->QueuedMission == Mission::Selling)
+		{
+			continue;
+		}
+
+		auto const pType = pBld->Type;
+
+		if (!pType || pType->Factory != produces)
+			continue;
+
+		// requirePower, deliberately. PrereqValidate calls HasFactory with
+		// requirePower=true, so a powered-down factory reports Unpowered, not
+		// Available. Skipping this check would make us answer "yes, there is a
+		// factory" where Antares answers "no" -- two implementations of one
+		// question, disagreeing exactly when the base is low on power.
+		if (!pBld->HasPower || pBld->Deactivated)
+			continue;
+
+		return true;
+	}
+
+	return false;
+}
+
+void AlwaysAvailable::PushCameos()
+{
+	if (!PushCameoEnabled || Types.empty())
+		return;
+
+	// Throttled hard. AddCameo is a strip mutation, not a query, and this runs
+	// on the post-loop seat -- once every 15 ticks is ample to observe whether
+	// a cameo appears.
+	if (++PushFrame % 15 != 0)
+		return;
+
+	auto const pHouse = HouseClass::CurrentPlayer;
+
+	if (!pHouse)
+		return;
+
+	// Only when the normal path genuinely cannot produce the cameo. With a
+	// usable ConYard, UpdateConstructionOptions populates the strip itself and
+	// pushing would duplicate its work.
+	if (HouseHasUsableFactory(pHouse, AbstractType::BuildingType))
+		return;
+
+	for (auto const pTechnoType : Types)
+	{
+		// Types is populated only from BuildingTypeClass::Array, so this is safe.
+		auto const pType = static_cast<BuildingTypeClass*>(pTechnoType);
+
+		++PushAttempts;
+
+		bool const added = MouseClass::Instance.AddCameo(
+			AbstractType::BuildingType, pType->ArrayIndex);
+
+		if (added)
+			++PushAccepted;
+
+		// First attempt and every 100th: enough to see whether AddCameo ever
+		// accepts, without a per-tick stream.
+		if (PushAttempts == 1 || PushAttempts % 100 == 0)
+		{
+			Debug::Log("[BQExt] AlwaysAvailable PUSH #%d %s idx=%d ->"
+				" AddCameo returned %s  [accepted %d]\n",
+				PushAttempts, pType->ID, pType->ArrayIndex,
+				added ? "TRUE" : "false", PushAccepted);
+		}
+	}
 }

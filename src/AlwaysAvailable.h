@@ -59,6 +59,24 @@ public:
 	// Off by default so the behaviour reverts with one INI key, no redeploy.
 	static bool Enabled;
 
+	// [BuildQueueExt] AlwaysAvailable.PushCameo=yes — the step-(a) experiment.
+	//
+	// ⚠ The substitution above is step (c) of four, and it was NOT useless: it
+	// fired ~26x and looked inert only because step (a) -- the cameo existing in
+	// the strip at all -- was missing. PrerequisiteExt's return handoff
+	// (docs/HANDOFF-AlwaysAvailable-RETURN.md) traced why:
+	//
+	//   BuildingClass::UpdateConstructionOptions (virtual, vtable 0x7E439C) is
+	//   what calls CanBuild and then SidebarClass::AddCameo. It is invoked per
+	//   OWNED BUILDING and bails unless the owner is CurrentPlayer. With no
+	//   ConYard, nothing drives it for BuildingTypes, so AddCameo is never
+	//   reached -- and no answer from CanBuild or FindFactory can matter,
+	//   because nothing is asking.
+	//
+	// So the cameo has to be PUSHED. AddCameo 0x6A6300 is a normal JMP_THIS
+	// callable, not an R0 stub, so we can call it directly.
+	static bool PushCameoEnabled;
+
 	// Split deliberately: the GLOBAL switch reads fine at the Read_File entry,
 	// but PER-TYPE tags must wait for the tail, where the TechnoType arrays
 	// actually exist. See Hooks.ProductionProbe.cpp for the full account.
@@ -91,6 +109,19 @@ public:
 	// presence.
 	static BuildingClass* Resolve(void* ecx, BuildingClass* pVerdict,
 		HouseClass* pHouse);
+
+	// Step (a): push tagged cameos into the strip when nothing else will.
+	// Judged purely on "does the cameo appear" -- being able to BUILD it also
+	// needs step (c), which is the substitution above.
+	static void PushCameos();
+
+	// Does this house own a factory the engine would actually accept for
+	// `produces`? Mirrors HasFactory's filters INCLUDING requirePower: the
+	// PrereqValidate call passes requirePower=true, so an unpowered factory
+	// yields Unpowered rather than Available. Omitting that check makes our
+	// answer disagree with Antares' for a powered-down ConYard -- the exact
+	// two-implementations-one-question split the return handoff warned about.
+	static bool HouseHasUsableFactory(HouseClass* pHouse, AbstractType produces);
 
 private:
 	// First usable building the house owns, preferring a powered one. Mirrors

@@ -237,5 +237,9 @@ DEFINE_HOOK(0x55B6B3, BQExt_LogicClass_AI_After_ProcessPending, 0x5)
 	// P-a: accounting only -- reports slot-count transitions, changes nothing.
 	ExtraQueues::ReportChanges();
 
+	// Step (a) experiment: push AlwaysAvailable cameos into the strip when
+	// nothing owned drives UpdateConstructionOptions for BuildingTypes.
+	AlwaysAvailable::PushCameos();
+
 	return 0;
 }
