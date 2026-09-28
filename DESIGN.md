@@ -635,6 +635,37 @@ bad outcome. The armed GAWEAP test answers exactly that, and is now a two-minute
 rather than a playthrough: build one War Factory, look at the Vehicles tab, check the
 probe's `total live factories for this house`.
 
+### ❌ THE STAND-IN DOES NOT WORK — wrong seat (in-game, 2026-09-24)
+
+`AlwaysAvailable.Enabled=yes`, `GACNST` dropped from GAPILL's `Prerequisite=`, ConYard
+sold. The substitution **fired** — `SUBSTITUTE #1 GAPILL -> stand-in GAPOWR`, ~26 times
+— and GAPILL stayed unbuildable *"like all structures"*.
+
+**Cause: the buildability path never consults `FindFactory`.** Antares'
+`HouseExt::PrereqValidate` — its `CanBuild` implementation — calls `HasFactory`
+**directly** (✔ `Antares-src/src/Ext/House/Body.cpp:294-300`), with **no BuildingType
+exclusion**:
+
+```cpp
+auto const state = HouseExt::HasFactory(pHouse, pItem, true, true, false, true).State;
+if (state <= FactoryState::NoFactory) return 0;   // Unbuildable
+```
+
+No ConYard → `NoFactory` → `CanBuild` returns 0 → *every* structure disappears,
+regardless of `Prerequisite=`. Exactly the observed behaviour, and upstream of anything
+this DLL hooks.
+
+> **⚠ This overturns the boundary claim above.** §7e said BuildQueueExt never needs
+> `0x4F8361` because *"`HasFactory` calls `CanBuild`, not the reverse"*. **They call each
+> other**, in both directions, depending on flags — one direction was verified and the
+> independence generalised from it. The factory requirement for buildings lives *inside*
+> `CanBuild`, so the only seat where that verdict is observable is the `0x4F8361`
+> epilogue, which [[prerequisiteext-project]] owns.
+>
+> **`AlwaysAvailable` therefore belongs in PrerequisiteExt — both halves, not just the
+> prerequisite one.** The `FindFactory` seat is correct for other consumers but is not
+> the buildability gate. The substitution is disarmed; the code stays for re-seating.
+
 ### Scope call
 
 Entirely **ours**, and it sits on the P2 table. Phased as P4b, beside `Factory.Mode`
