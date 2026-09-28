@@ -1,3 +1,35 @@
+> ## ✅ STEP (a) WORKS — tested in-game 2026-09-27
+>
+> `AddCameo` **returned TRUE** and the GAPILL cameo **appeared**. The experiment in
+> §5 was right, and so was the diagnosis behind it: nothing was asking, so the cameo
+> had to be pushed.
+>
+> ```
+> [BQExt] AlwaysAvailable PUSH #1 GAPILL idx=66 -> AddCameo returned TRUE  [accepted 1]
+> ```
+>
+> **Neither predicted failure mode appeared.** `RecheckCameos` did not drop it (no
+> flicker), and the tab stayed reachable.
+>
+> **Observed behaviour, all of it correct:**
+> - Cameo present at launch (MCV undeployed = no ConYard), **greyed**.
+> - **Disappears on deploying the MCV.** Expected: the push no-ops once a usable
+>   ConYard exists, and the normal path then correctly hides GAPILL because there is
+>   still no Barracks (`Prerequisite=BARRACKS`).
+> - **Returns on undeploying.** The push resumes.
+> - Normal play unaffected — GAPILL builds as usual with a ConYard and a Barracks.
+>
+> **It is greyed rather than live because step (b) is currently disarmed** (Test 25).
+> The cameo exists; `CanBuild` still answers 0. Re-arming the
+> `Prerequisite.NoFactory=` container is the next thing to test — that is the step
+> that should turn it live.
+>
+> Step (c) logged **0** substitutions this run, which is consistent: a greyed cameo
+> is never clicked, so `FindFactory` is never reached for it. It should begin firing
+> once (b) makes the cameo live.
+
+---
+
 # Handoff back to BuildQueueExt — `AlwaysAvailable` belongs here after all
 
 **From:** PrerequisiteExt, 2026-09-27. **Status:** root cause found, **feature not
