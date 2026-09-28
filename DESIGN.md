@@ -370,6 +370,85 @@ implementation (`grep` → nothing). ⚠ Whether classic Ares really has them is
 
 ---
 
+## 6b. Ask #2/#3 — the decision: **N dynamic channel slots**
+
+Decided 2026-09-27. The modder could not choose between the two surfaces and asked for
+the judgement call, with three constraints: **a tag on buildings**, granting **X extra
+queues**, and **compatible with [[traitext-project]]**.
+
+### The call, and why it is neither option as posed
+
+**Not "N fronts in one `FactoryClass`."** `FactoryClass::Object` is a single pointer
+(✔ `YRpp/FactoryClass.h`), so N fronts needs a parallel object list of our own *and*
+still leaves one cameo showing N progress values. All of the cost, none of the engine's
+help.
+
+**Not "N cameos" either** — duplicating cameos inherits the placement-identity problem
+(ask G) and the button-pool overflow trap (§9) before a single tank is built.
+
+**Instead: N slots on the existing channel axis.** The engine already runs concurrent
+production queues — the Defense tab *is* a second building queue, advancing at the same
+time as the Buildings queue and sharing one ConYard. §6's measurement showed the limit is
+exactly **one factory per channel**, and that a house happily runs several channels at
+once. So the cheapest true concurrency is *more channels*, not a richer factory.
+
+The difference from `BuildCat` (§0) is that those are **static** — a type belongs to a
+category. The modder wants **dynamic** slots: own the building, build two tanks at once,
+either tank. So:
+
+```ini
+[SOMEBUILDING]
+Factory.ExtraQueues=1      ; owning this grants +1 concurrent queue for its Factory= type
+```
+
+`slots(house, channel) = 1 + Σ Factory.ExtraQueues` over owned buildings whose `Factory=`
+matches that channel. `queueIndex 0` stays the engine's own slot and is untouched;
+indices `1..N-1` are ours.
+
+### What this actually requires (and what each part costs)
+
+| Part | Mechanism | Status |
+|---|---|---|
+| **Storage** | the P2 channel table, keyed `(abs, naval, cat, queueIndex)` | ✅ built + confirmed |
+| **Slot count** | sum the tag over owned buildings, recomputed on gain/loss | small |
+| **Advancing** | the engine only ticks the primary, so *we* tick indices ≥1 — at the post-loop seat `0x55B6B3` | ✅ seat proven live (LimboOnComplete) |
+| **Dispatch** | a click starts in the first free slot instead of always slot 0 | the real work |
+| **Display** | one cameo, N progress values | **deferred — see phasing** |
+
+### ⚠ TraitExt compatibility is a design constraint, not a footnote
+
+TraitExt **materializes when the applied-Trait set changes — "load time, or when a
+building goes up/down"** (✔ its DESIGN §5 Rule 2). That has two consequences here:
+
+1. **The slot count must never be snapshotted at rules load.** It has to be derived from
+   the *current* owned-building set, because a Trait can add or remove
+   `Factory.ExtraQueues` mid-match. Recomputing on building gain/loss is the same trigger
+   TraitExt already uses, so the two stay coherent for free.
+2. **Queue count is LOGICAL, not Cosmetic** (TraitExt's Rule 1). It changes production,
+   which is synced state, so it must resolve identically on every client and may never
+   be influenced by unsynced randomness. Deriving it from the owned-building set — itself
+   synced — satisfies this by construction.
+
+### Phasing — display last, deliberately
+
+1. **P-a — slot accounting, observe only.** Compute and log
+   `slots(house, channel)` from the tag. No behaviour change. Proves the tag parses
+   through the type path (the trap from §7e) and that the count tracks buildings
+   gained and lost.
+2. **P-b — one extra queue, invisible.** Allow `slots=2` to actually run: dispatch to the
+   free slot, advance it at the post-loop seat, complete and eject normally. **The cameo
+   still shows slot 0 only** — the second tank simply appears. Degraded UX, full
+   mechanism, and it isolates the production half from the sidebar half.
+3. **P-c — display.** One cameo, N progress values. This is where the sidebar work and
+   the button-pool trap land, and it shares its solution with ask G.
+4. **P-d — N > 2**, once the two-slot case is proven.
+
+> The point of P-b shipping without display is that **every previous failure in this
+> subsystem was a silent no-op** (§0). "A second tank appeared" is an unambiguous,
+> observable pass/fail that needs no log to interpret.
+
+---
+
 ## 7. Ask #4 — factory types, exit, output
 
 The factory-*type* half is **already Antares**: `Factory.ExplicitOnly=yes` + `BuiltAt=`
