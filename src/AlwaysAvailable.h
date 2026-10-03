@@ -191,6 +191,31 @@ public:
 	static void ProbeDisableCameo(HouseClass* pHouse, TechnoTypeClass* pType,
 		bool disable);
 
+	// ===================================================================
+	// HONOURING THE NORMAL RULES
+	//
+	// The feature is "needs no FACTORY", not "needs nothing". Every other
+	// buildability rule must still apply, or a tagged type becomes buildable by
+	// the wrong country, below its tech level, with its prerequisites unbuilt.
+	//
+	// ⚠ WHY THIS LIVES HERE AND NOT IN A PrerequisiteExt CONTAINER. The test
+	// fixture used `Absolute=yes`, which by design overrides Owner=, TechLevel
+	// and the vanilla Prerequisite= list as well -- PrerequisiteExt documents
+	// this as a residual hole it deliberately did not close, because closing it
+	// at the CanBuild seat means re-implementing vanilla prerequisites. We do
+	// not need to promote the verdict at all: steps (a), (c) and (e) bypass
+	// CanBuild entirely, so the fix is for OUR OWN steps to check these rules
+	// before acting. No promote, no override, nothing to un-override.
+	//
+	// ⚠ KNOWN LIMITATION, deliberately accepted. This re-implements vanilla
+	// `Prerequisite=` (plus `PrerequisiteOverride=` and the six negative
+	// generic-group encodings) but NOT Antares' `PrerequisiteLists`
+	// multi-alternative extension. Where Antares would accept an alternative
+	// list we will refuse, so this check is *stricter* than the engine's. That
+	// is the safe direction for a permission: we decline to grant where we are
+	// unsure, rather than granting something the engine would refuse.
+	static bool MeetsNormalRules(HouseClass* pHouse, TechnoTypeClass* pType);
+
 	// Mirrors Phobos' lambda (Hooks.cpp:331-339) and the vanilla meaning of
 	// BuildLimit: positive counts what you own NOW, negative counts what you
 	// have EVER built, and zero means unlimited.

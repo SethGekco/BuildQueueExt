@@ -7,6 +7,8 @@
 #include <UnitTypeClass.h>
 #include <AircraftTypeClass.h>
 #include <MouseClass.h>
+#include <RulesClass.h>
+#include <HouseTypeClass.h>
 #include <Utilities/Debug.h>
 
 std::set<TechnoTypeClass*> AlwaysAvailable::Types;
@@ -261,6 +263,11 @@ BuildingClass* AlwaysAvailable::Resolve(
 		return pVerdict;
 	}
 
+	// Owner=, TechLevel and Prerequisite= still apply. Without this a tagged
+	// type is buildable by the wrong country, under-teched, with nothing built.
+	if (!MeetsNormalRules(pHouse, pType))
+		return pVerdict;
+
 	auto const pStandIn = FindStandIn(pHouse);
 
 	if (!pStandIn)
@@ -322,6 +329,92 @@ bool AlwaysAvailable::HouseHasUsableFactory(
 	}
 
 	return false;
+}
+
+// Does the house own at least one of the BuildingTypes in this list?
+static bool OwnsAnyOf(HouseClass* pHouse, TypeList<int> const& list)
+{
+	for (auto i = 0; i < list.Count; ++i)
+	{
+		int const idx = list.Items[i];
+
+		if (idx >= 0 && pHouse->ActiveBuildingTypes.GetItemCount(idx) > 0)
+			return true;
+	}
+
+	return false;
+}
+
+bool AlwaysAvailable::MeetsNormalRules(HouseClass* pHouse, TechnoTypeClass* pType)
+{
+	if (!pHouse || !pType)
+		return false;
+
+	// --- Owner= -------------------------------------------------------------
+	// InOwners takes the house-type BIT, not the index. Passing the index would
+	// silently test the wrong country for every index above 0.
+	if (auto const pHouseType = pHouse->Type)
+	{
+		if (!pType->InOwners(1u << pHouseType->ArrayIndex))
+			return false;
+	}
+
+	// --- TechLevel ----------------------------------------------------------
+	// -1 means "never buildable" in vanilla, so it is a refusal rather than a
+	// trivially-satisfied low bar.
+	if (pType->TechLevel < 0)
+		return false;
+
+	if (pHouse->TechLevel < pType->TechLevel)
+		return false;
+
+	// --- PrerequisiteOverride= ---------------------------------------------
+	// Owning any of these satisfies prerequisites outright, so it is checked
+	// before the main list rather than after.
+	if (OwnsAnyOf(pHouse, pType->PrerequisiteOverride))
+		return true;
+
+	// --- Prerequisite= ------------------------------------------------------
+	// Every entry must be satisfied. Negative entries are the six generic
+	// groups, where owning ANY member of the group satisfies that one entry.
+	auto const pRules = RulesClass::Instance();
+
+	for (auto i = 0; i < pType->Prerequisite.Count; ++i)
+	{
+		int const entry = pType->Prerequisite.Items[i];
+
+		if (entry >= 0)
+		{
+			if (pHouse->ActiveBuildingTypes.GetItemCount(entry) <= 0)
+				return false;
+
+			continue;
+		}
+
+		if (!pRules)
+			return false;
+
+		// The negative encoding, straight from vanilla: -1 POWER, -2 FACTORY,
+		// -3 BARRACKS, -4 RADAR, -5 TECH, -6 PROC. Anything outside that range
+		// is something we do not understand, and refusing is the safe answer.
+		TypeList<int> const* pGroup = nullptr;
+
+		switch (entry)
+		{
+		case -1: pGroup = &pRules->PrerequisitePower;    break;
+		case -2: pGroup = &pRules->PrerequisiteFactory;  break;
+		case -3: pGroup = &pRules->PrerequisiteBarracks; break;
+		case -4: pGroup = &pRules->PrerequisiteRadar;    break;
+		case -5: pGroup = &pRules->PrerequisiteTech;     break;
+		case -6: pGroup = &pRules->PrerequisiteProc;     break;
+		default: return false;
+		}
+
+		if (!OwnsAnyOf(pHouse, *pGroup))
+			return false;
+	}
+
+	return true;
 }
 
 bool AlwaysAvailable::BuildLimitReached(HouseClass* pHouse, TechnoTypeClass* pType)
@@ -411,6 +504,11 @@ bool AlwaysAvailable::ResolveDisableCameo(
 	if (HouseHasUsableFactory(pHouse, AbstractType::BuildingType))
 		return disable;
 
+	// Same three rules as the substitution. A cameo we make clickable must be
+	// one the house is genuinely entitled to.
+	if (!MeetsNormalRules(pHouse, pType))
+		return disable;
+
 	// Never resurrect a type whose BuildLimit is genuinely spent -- that is the
 	// other clause of ShouldDisableCameo, and it is a real game rule.
 	if (BuildLimitReached(pHouse, pType))
@@ -466,6 +564,11 @@ void AlwaysAvailable::PushCameos()
 	{
 		// Types is populated only from BuildingTypeClass::Array, so this is safe.
 		auto const pType = static_cast<BuildingTypeClass*>(pTechnoType);
+
+		// Checked per type inside the loop because MeetsNormalRules is
+		// type-specific, unlike the house-wide spectator test above.
+		if (!MeetsNormalRules(pHouse, pType))
+			continue;
 
 		if (spectating && !AllowsSpectators(pType))
 		{
