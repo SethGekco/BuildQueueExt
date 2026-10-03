@@ -363,9 +363,20 @@ void AlwaysAvailable::ProbeDisableCameo(
 	if (++DisableTaggedCalls > 20 && DisableTaggedCalls % 2000 != 0)
 		return;
 
+	// Adjacent is logged to settle the placement question, not the cameo one.
+	// DisplayClass::PassesProximityCheck (0x4A8F20) reads Adjacent at 0x4A8F3E
+	// and expands the scan rectangle by Adjacent+1 on every side
+	// (`inc eax` at 0x4A8F48, then the lea/sub pairs through 0x4A8F74).
+	// So an observed slack of exactly ONE cell means Adjacent read as ZERO at
+	// runtime, whatever the INI says. This prints the value the engine holds.
+	// Safe to cast: the IsEnabledFor gate above means the type came from
+	// BuildingTypeClass::Array.
+	auto const pBldType = static_cast<BuildingTypeClass*>(pType);
+
 	Debug::Log("[BQExt] AlwaysAvailable disable-probe #%d %s:"
 		" incoming=%d enabled=%d hasFactory=%d limitReached=%d"
-		" spectating=%d allowsSpec=%d  (limit=%d ownedNow=%d)\n",
+		" spectating=%d allowsSpec=%d  (limit=%d ownedNow=%d"
+		" ADJACENT=%d baseNormal=%d)\n",
 		DisableTaggedCalls, pType->ID,
 		disable ? 1 : 0,
 		Enabled ? 1 : 0,
@@ -374,7 +385,9 @@ void AlwaysAvailable::ProbeDisableCameo(
 		IsSpectating(pHouse) ? 1 : 0,
 		AllowsSpectators(pType) ? 1 : 0,
 		pType->BuildLimit,
-		pHouse ? pHouse->CountOwnedNow(pType) : -1);
+		pHouse ? pHouse->CountOwnedNow(pType) : -1,
+		pBldType->Adjacent,
+		pBldType->BaseNormal ? 1 : 0);
 }
 
 bool AlwaysAvailable::ResolveDisableCameo(
