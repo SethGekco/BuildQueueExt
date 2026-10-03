@@ -1,5 +1,12 @@
 #pragma once
 
+// Include order matters here and is copied from AlwaysAvailable.h, which
+// compiles. BuildingClass.h pulls in Helpers/Cast.h, whose generic_cast needs
+// FootClass COMPLETE -- including BuildingClass.h first yields a wall of
+// C2139/C2338 inside Cast.h that names FootClass and never mentions this file.
+#include <TechnoTypeClass.h>
+#include <HouseClass.h>
+#include <FootClass.h>
 #include <BuildingTypeClass.h>
 #include <BuildingClass.h>
 
