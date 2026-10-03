@@ -377,7 +377,9 @@ bool AlwaysAvailable::MeetsNormalRules(HouseClass* pHouse, TechnoTypeClass* pTyp
 	// --- Prerequisite= ------------------------------------------------------
 	// Every entry must be satisfied. Negative entries are the six generic
 	// groups, where owning ANY member of the group satisfies that one entry.
-	auto const pRules = RulesClass::Instance();
+	// DEFINE_REFERENCE(RulesClass*, Instance, 0x8871E0) -- a reference TO a
+	// pointer, not a function. `RulesClass::Instance()` does not compile.
+	auto const pRules = RulesClass::Instance;
 
 	for (auto i = 0; i < pType->Prerequisite.Count; ++i)
 	{
