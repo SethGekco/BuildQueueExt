@@ -110,7 +110,18 @@ DEFINE_HOOK(0x50B669, BQExt_HouseClass_ShouldDisableCameo_Epilogue, 0x5)
 //   [ESP+0xC] = bool includeQueued
 //   EAX       = verdict so far: 1 buildable, 0 unbuildable, -1 temporarily
 
-DEFINE_HOOK(0x4F8361, BQExt_HouseClass_CanBuild_AlwaysAvailable, 0x3)
+// ⚠ SIZE 0x5, NOT 0x3 — and the reasoning I copied from PrerequisiteExt was
+// wrong for a handler that RETURNS 0. `ret 0xC` really is 3 bytes, but Syringe
+// stamps 5 and its stub resumes at addr+5, so a handler returning 0 resumes two
+// bytes into the adjacent jump table. PrerequisiteExt gets away with declaring 3
+// only because the replayed `ret 0xC` returns before the resume point is ever
+// reached; that makes the orphaned bytes harmless, not the declared size honest.
+// This project's own check_hook_bounds.py caught it, and its waiver comment is
+// reserved for handlers that never return 0 — which this one does, so claiming
+// the waiver would be a lie. Declaring the 5 bytes Syringe actually takes is
+// both accurate and safe: the two extra bytes are copied but never executed,
+// because the `ret` ahead of them returns first.
+DEFINE_HOOK(0x4F8361, BQExt_HouseClass_CanBuild_AlwaysAvailable, 0x5)
 {
 	GET(HouseClass*, pHouse, ECX);
 	GET_STACK(TechnoTypeClass*, pType, 0x4);
