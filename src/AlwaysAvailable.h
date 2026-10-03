@@ -129,6 +129,60 @@ public:
 	static BuildingClass* Resolve(void* ecx, BuildingClass* pVerdict,
 		HouseClass* pHouse);
 
+	// ===================================================================
+	// STEP (e) — THE ACTUALLY BINDING SEAT: ShouldDisableCameo 0x50B370.
+	//
+	// "Dark" and "unclickable" are TWO INDEPENDENT decisions, recomputed
+	// every draw, neither cached on the strip entry:
+	//
+	//   absent      StripClass::Recalc 0x6AA600  CanBuild(t,false,true) == 0
+	//   dark        StripClass::DrawStrip        sete on CanBuild(t,0,0) == -1
+	//                 0x6A97D2-0x6A97E5
+	//   unclickable HouseClass::ShouldDisableCameo 0x50B370, called from the
+	//                 darken block at 0x6A97EA
+	//
+	// ⚠ ShouldDisableCameo NEVER CALLS CanBuild. Antares' replacement
+	// (Antares-src/src/Ext/House/Hooks.Queue.cpp:115-180) decides:
+	//
+	//     BuildLimitRemaining - queued <= 0            -> disable
+	//     HasFactory(...).State < Available             -> disable
+	//
+	// With no ConYard that second clause is unconditionally true, so the
+	// cameo is disabled no matter what any CanBuild seat answers. THIS is
+	// why steps (a)+(b)+(c) all verified green in-game and the cameo still
+	// rendered dark and refused clicks:
+	//
+	//     frame 51221: GAPILL house 0 -> ALLOWED (engine said unbuildable)
+	//       T25_NoConYard: gate=active test=pass        ... still dark.
+	//
+	// Same shape of error as the original handoff -- a seat that is
+	// observable but not binding. The binding one is this.
+	//
+	// SEAT: the EPILOGUE 0x50B669, not the entry. Antares fully replaces the
+	// function, and a non-zero return aborts the rest of the Syringe chain,
+	// so an entry hook would never run. Phobos already sits on this exact
+	// epilogue (Phobos/src/Ext/House/Hooks.cpp:349) and always returns 0, so
+	// the seat chains. Injection order from syringe.log puts Phobos.dll
+	// BEFORE BuildQueueExt.dll, so we run LAST and get the final word.
+	//
+	// ⚠ Phobos' convention here is RAISE ONLY, never lower. We deliberately
+	// lower, which is the one thing that convention forbids -- so it is
+	// scoped as narrowly as possible: only for a tagged type, only when the
+	// house genuinely has no usable factory (the single reason this feature
+	// exists to neutralise), and never when a BuildLimit is actually reached.
+	// Anything else Phobos or Antares disabled stays disabled.
+	//
+	//   ECX       = HouseClass*
+	//   [ESP+0x4] = TechnoTypeClass*
+	//   EAX       = the bool computed so far (Antares' + Phobos' verdict)
+	static bool ResolveDisableCameo(HouseClass* pHouse, TechnoTypeClass* pType,
+		bool disable);
+
+	// Mirrors Phobos' lambda (Hooks.cpp:331-339) and the vanilla meaning of
+	// BuildLimit: positive counts what you own NOW, negative counts what you
+	// have EVER built, and zero means unlimited.
+	static bool BuildLimitReached(HouseClass* pHouse, TechnoTypeClass* pType);
+
 	// Step (a): push tagged cameos into the strip when nothing else will.
 	// Judged purely on "does the cameo appear" -- being able to BUILD it also
 	// needs step (c), which is the substitution above.

@@ -52,3 +52,35 @@ DEFINE_HOOK(0x5F7A89, BQExt_ObjectTypeClass_FindFactory_Epilogue, 0x5)
 
 	return 0;
 }
+
+// HouseClass::ShouldDisableCameo EPILOGUE @ 0x50B669 — step (e), and the seat
+// that actually decides whether the cameo is dark and refuses clicks. See
+// AlwaysAvailable.h for why no CanBuild seat can substitute for this one.
+//
+// STOLEN BYTES. Phobos stamps this same address with size 0x5
+// (Phobos/src/Ext/House/Hooks.cpp:349) and always returns 0, so 5 bytes is
+// known-safe here and the chain is cooperative. Injection order from
+// syringe.log is Phobos.dll then BuildQueueExt.dll, so Phobos' raise runs
+// first and our lower runs after it -- deliberate, since we must be able to
+// clear a disable that Antares set for the no-factory reason.
+//
+//   ECX       = HouseClass*
+//   [ESP+0x4] = TechnoTypeClass*
+//   EAX       = bool disable, as computed by Antares and then Phobos
+
+DEFINE_HOOK(0x50B669, BQExt_HouseClass_ShouldDisableCameo_Epilogue, 0x5)
+{
+	GET(HouseClass*, pThis, ECX);
+	GET_STACK(TechnoTypeClass*, pType, 0x4);
+	GET(bool const, disable, EAX);
+
+	bool const resolved =
+		AlwaysAvailable::ResolveDisableCameo(pThis, pType, disable);
+
+	// Written only on an actual change, so the common path leaves EAX exactly
+	// as the earlier handlers in the chain left it.
+	if (resolved != disable)
+		R->EAX(resolved);
+
+	return 0;
+}

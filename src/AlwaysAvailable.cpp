@@ -12,6 +12,8 @@
 std::set<TechnoTypeClass*> AlwaysAvailable::Types;
 std::set<TechnoTypeClass*> AlwaysAvailable::SpectatorTypes;
 static int SpectatorSuppressed = 0;
+static int DisableLowered = 0;
+static int DisableLimitKept = 0;
 bool AlwaysAvailable::ProbeEnabled = false;
 bool AlwaysAvailable::Enabled = false;
 bool AlwaysAvailable::PushCameoEnabled = false;
@@ -316,6 +318,71 @@ bool AlwaysAvailable::HouseHasUsableFactory(
 			continue;
 
 		return true;
+	}
+
+	return false;
+}
+
+bool AlwaysAvailable::BuildLimitReached(HouseClass* pHouse, TechnoTypeClass* pType)
+{
+	if (!pHouse || !pType)
+		return false;
+
+	int const limit = pType->BuildLimit;
+
+	// Zero is "unlimited" in vanilla, and treating it as a limit of zero would
+	// disable every untagged-limit building on the map.
+	if (limit > 0)
+		return pHouse->CountOwnedNow(pType) >= limit;
+
+	if (limit < 0)
+		return pHouse->CountOwnedEver(pType) >= -limit;
+
+	return false;
+}
+
+bool AlwaysAvailable::ResolveDisableCameo(
+	HouseClass* pHouse, TechnoTypeClass* pType, bool disable)
+{
+	// Only ever lower, and only from an already-disabled state. If nothing
+	// disabled the cameo there is nothing here to fix.
+	if (!Enabled || !disable || !pHouse || !pType)
+		return disable;
+
+	if (!IsEnabledFor(pType))
+		return disable;
+
+	if (IsSpectating(pHouse) && !AllowsSpectators(pType))
+		return disable;
+
+	// Types holds BuildingTypes only, so the factory abstract is BuildingType.
+	// If the house DOES have a usable factory then whatever disabled this cameo
+	// was not the no-factory clause, and overriding it would be us silently
+	// cancelling a decision that is none of our business.
+	if (HouseHasUsableFactory(pHouse, AbstractType::BuildingType))
+		return disable;
+
+	// Never resurrect a type whose BuildLimit is genuinely spent -- that is the
+	// other clause of ShouldDisableCameo, and it is a real game rule.
+	if (BuildLimitReached(pHouse, pType))
+	{
+		if (++DisableLimitKept == 1 || DisableLimitKept % 500 == 0)
+		{
+			Debug::Log("[BQExt] AlwaysAvailable KEEP-DISABLED #%d %s --"
+				" BuildLimit reached (limit=%d ownedNow=%d)\n",
+				DisableLimitKept, pType->ID, pType->BuildLimit,
+				pHouse->CountOwnedNow(pType));
+		}
+
+		return disable;
+	}
+
+	if (++DisableLowered == 1 || DisableLowered % 500 == 0)
+	{
+		Debug::Log("[BQExt] AlwaysAvailable ENABLE-CAMEO #%d %s --"
+			" lowered ShouldDisableCameo (no usable factory, limit ok)"
+			"  [kept-for-limit %d]\n",
+			DisableLowered, pType->ID, DisableLimitKept);
 	}
 
 	return false;
