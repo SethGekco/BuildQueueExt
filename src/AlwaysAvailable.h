@@ -216,6 +216,48 @@ public:
 	// unsure, rather than granting something the engine would refuse.
 	static bool MeetsNormalRules(HouseClass* pHouse, TechnoTypeClass* pType);
 
+	// ===================================================================
+	// STEP (f) — a PRECISE promote at the CanBuild epilogue 0x4F8361.
+	//
+	// Disarming the blunt `Absolute=yes` container fixed the override hole and
+	// immediately exposed why a promote was needed at all: with CanBuild
+	// answering 0, clicking a FINISHED item REFUNDED instead of placing.
+	// `StripClass::Recalc` (0x6AA600) drops a cameo **and abandons its
+	// production** when `CanBuild(type, false, true) == 0`, so the completed
+	// building was being cancelled and refunded the moment placement began.
+	//
+	// So the verdict does have to be non-zero -- but nothing like as broadly as
+	// `Absolute=yes` made it. This promotes **0 -> 1 only**, and only when the
+	// missing factory is the ONLY thing wrong:
+	//
+	//   * incoming is exactly Unbuildable(0)   -- never touches -1 or 1, so a
+	//     build-limit grey or an existing yes is left completely alone;
+	//   * the type carries the tag;
+	//   * the house has no usable factory, so the 0 really is the factory's
+	//     fault and not something else's;
+	//   * MeetsNormalRules passes -- Owner=, TechLevel, Prerequisite=;
+	//   * the BuildLimit is not spent;
+	//   * the house is not spectating.
+	//
+	// That is the difference between this and the container it replaces: the
+	// container promoted regardless of WHY the verdict was 0.
+	//
+	// SEAT. PrerequisiteExt occupies this address, writes EAX and returns 0, so
+	// the chain is cooperative; syringe.log puts PrerequisiteExt.dll before
+	// BuildQueueExt.dll, so we see its verdict and get the final word. Declared
+	// size 0x3 to match PrerequisiteExt and the hook registry -- the true length
+	// of `ret 0xC`. Syringe stamps 5 regardless; declaring 3 just avoids
+	// claiming two bytes of the adjacent jump table.
+	//
+	//   ECX       = HouseClass*
+	//   [ESP+0x0] = return address  (0x4F8361 is `ret 0xC`: still the callee's frame)
+	//   [ESP+0x4] = TechnoTypeClass*
+	//   [ESP+0x8] = bool buildLimitOnly
+	//   [ESP+0xC] = bool includeQueued
+	//   EAX       = the verdict so far
+	static int ResolveCanBuild(HouseClass* pHouse, TechnoTypeClass* pType,
+		int incoming);
+
 	// Mirrors Phobos' lambda (Hooks.cpp:331-339) and the vanilla meaning of
 	// BuildLimit: positive counts what you own NOW, negative counts what you
 	// have EVER built, and zero means unlimited.

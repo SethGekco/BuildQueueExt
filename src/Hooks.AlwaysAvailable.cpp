@@ -93,3 +93,35 @@ DEFINE_HOOK(0x50B669, BQExt_HouseClass_ShouldDisableCameo_Epilogue, 0x5)
 
 	return 0;
 }
+
+// HouseClass::CanBuild EPILOGUE @ 0x4F8361 — step (f), the precise promote.
+// See AlwaysAvailable.h for why a promote is needed at all and how this differs
+// from the `Absolute=yes` container it replaces.
+//
+// PrerequisiteExt sits on this same address, writes EAX and returns 0, and is
+// injected BEFORE us (syringe.log), so we observe its verdict and get the last
+// word. Size 0x3 matches PrerequisiteExt, Phobos and the hook registry: the true
+// length of `ret 0xC`. Syringe stamps 5 bytes regardless, so declaring 3 changes
+// nothing at runtime and avoids claiming two bytes of the adjacent jump table.
+//
+//   ECX       = HouseClass*
+//   [ESP+0x4] = TechnoTypeClass*     (0x4F8361 is `ret 0xC` -- callee's frame,
+//   [ESP+0x8] = bool buildLimitOnly   so [ESP+0] is the return address)
+//   [ESP+0xC] = bool includeQueued
+//   EAX       = verdict so far: 1 buildable, 0 unbuildable, -1 temporarily
+
+DEFINE_HOOK(0x4F8361, BQExt_HouseClass_CanBuild_AlwaysAvailable, 0x3)
+{
+	GET(HouseClass*, pHouse, ECX);
+	GET_STACK(TechnoTypeClass*, pType, 0x4);
+	GET(int const, incoming, EAX);
+
+	int const resolved = AlwaysAvailable::ResolveCanBuild(pHouse, pType, incoming);
+
+	// Written only on an actual change, so every untagged type leaves this hook
+	// with EAX exactly as PrerequisiteExt and Antares left it.
+	if (resolved != incoming)
+		R->EAX(resolved);
+
+	return 0;
+}

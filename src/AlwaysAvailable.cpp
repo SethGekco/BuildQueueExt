@@ -17,6 +17,7 @@ static int SpectatorSuppressed = 0;
 static int DisableLowered = 0;
 static int DisableLimitKept = 0;
 static int DisableTaggedCalls = 0;
+static int CanBuildPromotes = 0;
 bool AlwaysAvailable::ProbeEnabled = false;
 bool AlwaysAvailable::Enabled = false;
 bool AlwaysAvailable::PushCameoEnabled = false;
@@ -417,6 +418,43 @@ bool AlwaysAvailable::MeetsNormalRules(HouseClass* pHouse, TechnoTypeClass* pTyp
 	}
 
 	return true;
+}
+
+int AlwaysAvailable::ResolveCanBuild(
+	HouseClass* pHouse, TechnoTypeClass* pType, int incoming)
+{
+	// Unbuildable(0) ONLY. A -1 means greyed-for-a-reason (build limit, or
+	// unpowered) and a 1 is already a yes; touching either would be us
+	// overruling a decision we were not asked about.
+	if (!Enabled || incoming != 0 || !pHouse || !pType)
+		return incoming;
+
+	if (!IsEnabledFor(pType))
+		return incoming;
+
+	if (IsSpectating(pHouse) && !AllowsSpectators(pType))
+		return incoming;
+
+	// The 0 has to be the FACTORY's fault. With a usable factory present the
+	// verdict was refused for some other reason entirely, and promoting it
+	// would grant something unrelated to this feature.
+	if (HouseHasUsableFactory(pHouse, AbstractType::BuildingType))
+		return incoming;
+
+	if (!MeetsNormalRules(pHouse, pType))
+		return incoming;
+
+	if (BuildLimitReached(pHouse, pType))
+		return incoming;
+
+	if (++CanBuildPromotes == 1 || CanBuildPromotes % 2000 == 0)
+	{
+		Debug::Log("[BQExt] AlwaysAvailable PROMOTE-CANBUILD #%d %s --"
+			" 0 -> 1 (no factory, rules met, limit ok)\n",
+			CanBuildPromotes, pType->ID);
+	}
+
+	return 1;
 }
 
 bool AlwaysAvailable::BuildLimitReached(HouseClass* pHouse, TechnoTypeClass* pType)
