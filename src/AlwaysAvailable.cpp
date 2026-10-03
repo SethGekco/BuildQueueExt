@@ -14,6 +14,7 @@ std::set<TechnoTypeClass*> AlwaysAvailable::SpectatorTypes;
 static int SpectatorSuppressed = 0;
 static int DisableLowered = 0;
 static int DisableLimitKept = 0;
+static int DisableTaggedCalls = 0;
 bool AlwaysAvailable::ProbeEnabled = false;
 bool AlwaysAvailable::Enabled = false;
 bool AlwaysAvailable::PushCameoEnabled = false;
@@ -339,6 +340,41 @@ bool AlwaysAvailable::BuildLimitReached(HouseClass* pHouse, TechnoTypeClass* pTy
 		return pHouse->CountOwnedEver(pType) >= -limit;
 
 	return false;
+}
+
+void AlwaysAvailable::ProbeDisableCameo(
+	HouseClass* pHouse, TechnoTypeClass* pType, bool disable)
+{
+	static bool announced = false;
+
+	if (!announced)
+	{
+		announced = true;
+		Debug::Log("[BQExt] AlwaysAvailable ShouldDisableCameo hook IS LIVE"
+			" (first call: disable=%d type=%s)\n",
+			disable ? 1 : 0, pType ? pType->ID : "(null)");
+	}
+
+	if (!pType || !IsEnabledFor(pType))
+		return;
+
+	// Tagged types only, and bounded: enough to see the steady state without
+	// flooding a log that already runs to hundreds of thousands of lines.
+	if (++DisableTaggedCalls > 20 && DisableTaggedCalls % 2000 != 0)
+		return;
+
+	Debug::Log("[BQExt] AlwaysAvailable disable-probe #%d %s:"
+		" incoming=%d enabled=%d hasFactory=%d limitReached=%d"
+		" spectating=%d allowsSpec=%d  (limit=%d ownedNow=%d)\n",
+		DisableTaggedCalls, pType->ID,
+		disable ? 1 : 0,
+		Enabled ? 1 : 0,
+		HouseHasUsableFactory(pHouse, AbstractType::BuildingType) ? 1 : 0,
+		BuildLimitReached(pHouse, pType) ? 1 : 0,
+		IsSpectating(pHouse) ? 1 : 0,
+		AllowsSpectators(pType) ? 1 : 0,
+		pType->BuildLimit,
+		pHouse ? pHouse->CountOwnedNow(pType) : -1);
 }
 
 bool AlwaysAvailable::ResolveDisableCameo(

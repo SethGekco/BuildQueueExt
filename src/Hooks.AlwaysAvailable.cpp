@@ -72,15 +72,24 @@ DEFINE_HOOK(0x50B669, BQExt_HouseClass_ShouldDisableCameo_Epilogue, 0x5)
 {
 	GET(HouseClass*, pThis, ECX);
 	GET_STACK(TechnoTypeClass*, pType, 0x4);
-	GET(bool const, disable, EAX);
+
+	// ⚠ READ AS int AND MASK, never GET(bool, .., EAX). The function returns a
+	// bool in AL and the upper three bytes of EAX are not guaranteed clean, so
+	// casting the whole register to bool can read true where AL is 0.
+	// PrerequisiteExt masks with 0xFF at this same address for this reason.
+	GET(int const, incoming, EAX);
+	bool const disable = (incoming & 0xFF) != 0;
+
+	AlwaysAvailable::ProbeDisableCameo(pThis, pType, disable);
 
 	bool const resolved =
 		AlwaysAvailable::ResolveDisableCameo(pThis, pType, disable);
 
 	// Written only on an actual change, so the common path leaves EAX exactly
-	// as the earlier handlers in the chain left it.
+	// as the earlier handlers in the chain left it. Writing an explicit 0/1
+	// rather than a bool keeps the upper bytes defined for whoever reads next.
 	if (resolved != disable)
-		R->EAX(resolved);
+		R->EAX(resolved ? 1 : 0);
 
 	return 0;
 }

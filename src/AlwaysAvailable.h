@@ -178,6 +178,19 @@ public:
 	static bool ResolveDisableCameo(HouseClass* pHouse, TechnoTypeClass* pType,
 		bool disable);
 
+	// LIVENESS + BRANCH PROBE. ResolveDisableCameo logs only its two terminal
+	// outcomes, so its first armed run produced zero lines and could not be
+	// told apart from a dead hook -- the exact trap the encyclopedia warns
+	// about ("legal != live"), and the exact trap PrerequisiteExt already fell
+	// into and fixed at this same address with a once-per-process announce.
+	// Shipping an early-return ladder with no entry log was the fourth
+	// repetition of this mistake on this feature.
+	//
+	// Announces once, then for a TAGGED type reports every predicate and which
+	// branch was taken, so one run names the responsible condition.
+	static void ProbeDisableCameo(HouseClass* pHouse, TechnoTypeClass* pType,
+		bool disable);
+
 	// Mirrors Phobos' lambda (Hooks.cpp:331-339) and the vanilla meaning of
 	// BuildLimit: positive counts what you own NOW, negative counts what you
 	// have EVER built, and zero means unlimited.
