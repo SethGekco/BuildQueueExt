@@ -4,6 +4,8 @@
 #include <Utilities/Debug.h>
 
 std::set<BuildingTypeClass*> BuildOffAnyBuilding::Types;
+std::set<BuildingTypeClass*> BuildOffAnyBuilding::NoProximityTypes;
+static int ProximitySkips = 0;
 bool BuildOffAnyBuilding::Enabled = false;
 
 static BuildingTypeClass* PlacingType = nullptr;
@@ -33,6 +35,21 @@ void BuildOffAnyBuilding::ReadTypeConfig(CCINIClass* pINI)
 	{
 		if (!pType)
 			continue;
+
+		bool const npWas = NoProximityTypes.find(pType) != NoProximityTypes.end();
+		bool const npNow =
+			pINI->ReadBool(pType->ID, "Adjacent.NotRequired", npWas);
+
+		if (npNow != npWas)
+		{
+			if (npNow)
+				NoProximityTypes.insert(pType);
+			else
+				NoProximityTypes.erase(pType);
+
+			Debug::Log("[BQExt] Adjacent.NotRequired %s: %s (Adjacent=%d)\n",
+				npNow ? "enabled" : "disabled", pType->ID, pType->Adjacent);
+		}
 
 		bool const was = Types.find(pType) != Types.end();
 		bool const now = pINI->ReadBool(pType->ID, "BuildOffAnyBuilding", was);
@@ -100,6 +117,29 @@ bool BuildOffAnyBuilding::ShouldIgnoreBaseNormal(BuildingClass* pCellBuilding)
 			Accepts, PlacingType->ID,
 			pCellBuilding->Type ? pCellBuilding->Type->ID : "(?)",
 			pCellBuilding->Type && pCellBuilding->Type->BaseNormal ? 1 : 0);
+	}
+
+	return true;
+}
+
+bool BuildOffAnyBuilding::SkipsProximityCheck(void* pType)
+{
+	if (!Enabled || !pType || NoProximityTypes.empty())
+		return false;
+
+	// Pointer identity only. NoProximityTypes is populated solely from
+	// BuildingTypeClass::Array, so a UnitType or garbage value cannot match and
+	// is never dereferenced.
+	auto const candidate = reinterpret_cast<BuildingTypeClass*>(pType);
+
+	if (NoProximityTypes.find(candidate) == NoProximityTypes.end())
+		return false;
+
+	if (++ProximitySkips == 1 || ProximitySkips % 2000 == 0)
+	{
+		Debug::Log("[BQExt] Adjacent.NotRequired SKIP #%d %s --"
+			" proximity check forced to pass\n",
+			ProximitySkips, candidate->ID);
 	}
 
 	return true;

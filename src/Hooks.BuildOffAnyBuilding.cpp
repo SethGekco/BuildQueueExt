@@ -57,3 +57,47 @@ DEFINE_HOOK(0x4A8FE6, BQExt_DisplayClass_PassesProximityCheck_BaseNormal, 0x6)
 
 	return 0;
 }
+
+// DisplayClass::PassesProximityCheck TRUE ENTRY @ 0x4A8EB0 — `Adjacent.NotRequired`.
+//
+// ⚠ 0x4A8EB0 is the real function entry (YRpp DisplayClass.h:26). 0x4A8F20,
+// which the BuildOffAnyBuilding capture hook above uses, is already PAST the
+// prologue -- by then `sub esp,0x20` has run and esi/edi are pushed, so the
+// frame there is NOT the caller's and an early return would corrupt the stack.
+//
+// STOLEN BYTES `a1 4c 3d a8 00` = `mov eax,ds:0xa83d4c`. Exactly 5, ONE whole
+// instruction, absolute operand so position-independent and safe to replay.
+//
+// THE EARLY RETURN IS VALID ONLY HERE. At this instruction nothing has been
+// pushed and esp has not moved, so the frame is still the caller's:
+//
+//   [ESP+0x00] = return address
+//   [ESP+0x04] = ObjectTypeClass*  the type being placed
+//   [ESP+0x08] = int houseArrayIndex      (the engine reads this at 0x4A8EB5)
+//   [ESP+0x0C] = CellStruct* foundationData
+//   [ESP+0x10] = CellStruct* currentPosition
+//
+// so jumping to the bare `ret 0x10` at 0x4A9059 pops the return address and
+// discards exactly the four arguments. Jumping to the OTHER true-exit at
+// 0x4A905C would be wrong: it begins `pop edi` / `pop esi`, unwinding pushes
+// that have not happened yet.
+//
+// SEAT IS UNCONTENDED, unlike the rest of this function -- Phobos holds
+// 0x4A8F3E and 0x4A8FD7, Antares 0x4A8FF5, and Kratos 0x4A904E with a 5-byte
+// stamp that also swallows 0x4A9052, which is additionally a Phobos jump target.
+// The entry avoids all four.
+
+DEFINE_HOOK(0x4A8EB0, BQExt_DisplayClass_PassesProximityCheck_TrueEntry, 0x5)
+{
+	enum { ReturnTrue = 0x4A9059 };   // bare `ret 0x10`
+
+	GET_STACK(void*, pType, 0x4);
+
+	if (BuildOffAnyBuilding::SkipsProximityCheck(pType))
+	{
+		R->EAX(1);                    // AL is the bool result
+		return ReturnTrue;
+	}
+
+	return 0;
+}

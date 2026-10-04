@@ -90,4 +90,33 @@ public:
 	// Called from the 0x4A8FE6 hook. True => skip the BaseNormal test and
 	// accept this owned building as an anchor.
 	static bool ShouldIgnoreBaseNormal(BuildingClass* pCellBuilding);
+
+	// ===================================================================
+	// `Adjacent.NotRequired=yes` — a TAMED PlaceAnywhere.
+	//
+	// The modder's framing: vanilla `PlaceAnywhere` "really does allow things to
+	// be placed anywhere ... on top of trees, units, cliffs, other buildings",
+	// which is why it is niche. They asked whether a version could respect the
+	// other placement rules.
+	//
+	// It can, because adjacency is isolated: `DisplayClass::PassesProximityCheck`
+	// (0x4A8EB0) answers ONLY "is this close enough to something I own". Terrain,
+	// cliffs, occupancy, foundation and tiberium checks all live outside it, in
+	// the rest of the placement validator. Forcing just this function to pass
+	// therefore drops the adjacency requirement and nothing else — so you can
+	// build in the middle of nowhere, but still not on a cliff or on a unit.
+	//
+	// ⚠ IT ALSO BYPASSES Phobos' `Adjacent.Allowed=` / `Adjacent.Disallowed=`
+	// for the tagged type, because those are evaluated inside this same function
+	// as refinements of the same requirement. That is consistent -- the tag says
+	// there is no adjacency requirement at all, so there is nothing left for
+	// those keys to refine -- but it is a real interaction worth knowing before
+	// combining them.
+	static std::set<BuildingTypeClass*> NoProximityTypes;
+
+	// Takes ObjectTypeClass* because that is the function's declared parameter
+	// type. Used for pointer identity only -- never dereferenced -- so a
+	// non-BuildingType simply fails to match, exactly like IdentifyType's
+	// discipline in AlwaysAvailable.
+	static bool SkipsProximityCheck(void* pType);
 };
