@@ -48,9 +48,17 @@ DEFINE_HOOK(0x4A8F20, BQExt_DisplayClass_PassesProximityCheck_Entry, 0x5)
 
 DEFINE_HOOK(0x4A8FE6, BQExt_DisplayClass_PassesProximityCheck_BaseNormal, 0x6)
 {
-	enum { AcceptAnchor = 0x4A8FF5 };
+	// 0x4A902C is the loop-continue -- "skip this building" -- and is what
+	// Phobos uses from its own handler in this function.
+	enum { AcceptAnchor = 0x4A8FF5, SkipBuilding = 0x4A902C };
 
 	GET(BuildingClass*, pCellBuilding, ESI);
+
+	// Adjacent.Anchor.Owner=no. Checked FIRST: a forbid must beat
+	// BuildOffAnyBuilding's accept, or the two tags would contradict each other
+	// on a BaseNormal=no building owned by the asking house.
+	if (BuildOffAnyBuilding::ForbidsOwnAnchor(pCellBuilding))
+		return SkipBuilding;
 
 	if (BuildOffAnyBuilding::ShouldIgnoreBaseNormal(pCellBuilding))
 		return AcceptAnchor;
@@ -100,4 +108,57 @@ DEFINE_HOOK(0x4A8EB0, BQExt_DisplayClass_PassesProximityCheck_TrueEntry, 0x5)
 	}
 
 	return 0;
+}
+
+// The NOT-OURS anchor branch @ 0x4A8FFA — `Adjacent.Anchor.<scope>=`.
+//
+//   4a8fe4:  jne 0x4a8ffa                  ; cell building is not ours
+//   4a8ff5:  mov BYTE PTR [esp+0x3c],0x1   ; ...or ours and accepted
+//   4a8ffa:  mov dl,BYTE PTR ds:0xa8b264   ; <- HERE: ally-build global
+//   4a9004:  mov edx,ds:0xa8022c           ; HouseClass::Array
+//   4a900a:  mov eax,[edx+eax*4]           ; the asking house, by index
+//   4a900e:  call 0x4f9a50                 ; IsAlliedWith
+//   4a901d:  mov al,[ecx+0x1550]           ; EligibileForAllyBuilding
+//   4a9027:  mov BYTE PTR [esp+0x3c],0x1   ; ACCEPT
+//
+// STOLEN BYTES `8a 15 64 b2 a8 00` = 6, ONE whole instruction, absolute operand.
+// Free: Antares' 5-byte stamp at 0x4A8FF5 ends at 0x4A8FF9.
+//
+// ⚠ THIS ADDRESS IS ALSO REACHED BY FALL-THROUGH from the own-building ACCEPT
+// at 0x4A8FF5, not only by the branches. So ownership is re-tested here and our
+// own buildings are handed straight back to vanilla -- judging them under the
+// ally rules would re-decide a case 0x4A8FE6 has already settled.
+//
+//   ESI       = BuildingClass*   the candidate anchor in this cell
+//   [ESP+..]  = houseArrayIndex  via STACK_OFFSET(0x30, 0x8), same frame as
+//               0x4A8FD7 since nothing is pushed in between
+
+DEFINE_HOOK(0x4A8FFA, BQExt_DisplayClass_PassesProximityCheck_AnchorScope, 0x6)
+{
+	enum { AcceptAnchor = 0x4A8FF5, SkipBuilding = 0x4A902C };
+
+	GET(BuildingClass*, pCellBuilding, ESI);
+	GET_STACK(int const, houseArrayIndex, STACK_OFFSET(0x30, 0x8));
+
+	if (!pCellBuilding)
+		return 0;
+
+	auto const pCellOwner = pCellBuilding->Owner;
+	auto const pAsking = BuildOffAnyBuilding::HouseByIndex(houseArrayIndex);
+
+	if (!pCellOwner || !pAsking)
+		return 0;
+
+	// Our own buildings were already decided at 0x4A8FE6. See the fall-through
+	// warning above.
+	if (pCellOwner == pAsking)
+		return 0;
+
+	int const verdict = BuildOffAnyBuilding::AnchorVerdict(
+		BuildOffAnyBuilding::PlacingTypeNow(), pAsking, pCellOwner);
+
+	if (verdict < 0)
+		return 0;        // unset -> leave the engine's own ally logic alone
+
+	return verdict > 0 ? AcceptAnchor : SkipBuilding;
 }

@@ -119,4 +119,57 @@ public:
 	// non-BuildingType simply fails to match, exactly like IdentifyType's
 	// discipline in AlwaysAvailable.
 	static bool SkipsProximityCheck(void* pType);
+
+	// ===================================================================
+	// `Adjacent.Anchor.<scope>=` — WHOSE buildings may anchor this one.
+	//
+	//   Adjacent.Anchor.Owner=no     ; DEFAULT YES -- forbid anchoring on your
+	//                                ; OWN structures (modder's explicit ask)
+	//   Adjacent.Anchor.Team=yes     ; mutual allies
+	//   Adjacent.Anchor.Ally=yes     ; allied (one-way, as the engine sees it)
+	//   Adjacent.Anchor.Enemy=yes
+	//   Adjacent.Anchor.Neutral=yes  ; MultiplayPassive -- the civilian/special
+	//                                ; house, which is why there is no separate
+	//                                ; `Special` key
+	//
+	// Scope vocabulary is PrerequisiteExt's `HouseScope` (Owner/Ally/Team/Enemy/
+	// Neutral) resolved the SAME way, so one name means one thing across the
+	// modder's projects: Team is `IsMutualAlly`, Ally is `IsAlliedWith`, Neutral
+	// is `IsNeutral()` i.e. `Type->MultiplayPassive`.
+	//
+	// ⚠ TRI-STATE, NOT BOOLEAN. Unset must mean "vanilla", not "no", or adding
+	// this feature would silently forbid allied anchoring for every building in
+	// the game. An unset key leaves the engine's own decision untouched.
+	//
+	// SEATS (both already mapped, see Building-Placement-Proximity.md):
+	//   0x4A8FE6  the OWN-building branch -> Owner=no returns the loop-continue
+	//             target 0x4A902C ("skip this building"), which is also what
+	//             Phobos uses there.
+	//   0x4A8FFA  the NOT-OURS branch, 6 bytes (`mov dl,[0xA8B264]`), free --
+	//             Antares' 5-byte stamp at 0x4A8FF5 ends at 0x4A8FF9.
+	//
+	// ⚠ 0x4A8FFA IS ALSO REACHED BY FALL-THROUGH after an own building is
+	// ACCEPTED at 0x4A8FF5, not only by the `jne`/`je` skips. So the handler
+	// there must re-test ownership and bail for our own buildings, or it would
+	// re-judge them under the ally rules it has no business applying.
+	enum class AnchorScope { Owner, Team, Ally, Enemy, Neutral };
+
+	// -1 unset (vanilla), 0 forbidden, 1 allowed.
+	static int AnchorRuleFor(BuildingTypeClass* pType, AnchorScope scope);
+
+	// Classifies pCellOwner relative to the asking house and returns that
+	// scope's rule. Returns -1 when nothing is configured.
+	static int AnchorVerdict(BuildingTypeClass* pPlacing,
+		HouseClass* pAsking, HouseClass* pCellOwner);
+
+	static HouseClass* HouseByIndex(int idx);
+
+	// The type captured at the function entry (0x4A8F20). Exposed because the
+	// anchor-scope hook at 0x4A8FFA needs it and, like 0x4A8FE6, cannot read it
+	// from any register by that point.
+	static BuildingTypeClass* PlacingTypeNow();
+
+	// Adjacent.Anchor.Owner=no for the type currently being placed, with the
+	// cell building confirmed to belong to the asking house.
+	static bool ForbidsOwnAnchor(BuildingClass* pCellBuilding);
 };
