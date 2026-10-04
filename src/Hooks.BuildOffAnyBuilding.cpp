@@ -135,7 +135,22 @@ DEFINE_HOOK(0x4A8EB0, BQExt_DisplayClass_PassesProximityCheck_TrueEntry, 0x5)
 
 DEFINE_HOOK(0x4A8FFA, BQExt_DisplayClass_PassesProximityCheck_AnchorScope, 0x6)
 {
-	enum { AcceptAnchor = 0x4A8FF5, SkipBuilding = 0x4A902C };
+	// ⚠⚠ ACCEPT IS 0x4A9027 HERE, **NOT** 0x4A8FF5 — AND THE DIFFERENCE HUNG
+	// THE GAME. 0x4A8FF5 is the accept instruction `mov [esp+0x3c],1`, and it
+	// FALLS THROUGH into 0x4A8FFA, which is this very hook. So returning
+	// 0x4A8FF5 from here is a BACKWARD jump into a two-instruction infinite
+	// loop: accept -> our hook -> accept -> ... The game froze solid the moment
+	// a non-own building with an allow verdict came into range.
+	//
+	// 0x4A9027 is the byte-for-byte identical accept (`c6 44 24 3c 01`) at the
+	// end of the vanilla ally branch, and it falls into the loop-continue at
+	// 0x4A902C instead. Forward jump, same effect, terminates.
+	//
+	// GENERAL RULE for this function: from a hook at address X, only ever jump
+	// FORWARD. Every "accept" and "skip" label inside the per-cell loop is a
+	// fall-through into the next step, so a backward target re-enters whatever
+	// hook sits between it and X.
+	enum { AcceptAnchor = 0x4A9027, SkipBuilding = 0x4A902C };
 
 	GET(BuildingClass*, pCellBuilding, ESI);
 	GET_STACK(int const, houseArrayIndex, STACK_OFFSET(0x30, 0x8));
