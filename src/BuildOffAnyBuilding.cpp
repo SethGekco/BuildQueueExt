@@ -213,10 +213,13 @@ bool BuildOffAnyBuilding::SkipsProximityCheck(void* pType)
 
 HouseClass* BuildOffAnyBuilding::HouseByIndex(int idx)
 {
-	if (idx < 0 || idx >= HouseClass::Array->Count)
+	// DEFINE_REFERENCE gives a reference to the vector ITSELF, not a pointer --
+	// `.` not `->`. Same trap BuildingTypeClass::Array sprang earlier in this
+	// project (C2232/C2819 here, C2100 there).
+	if (idx < 0 || idx >= HouseClass::Array.Count)
 		return nullptr;
 
-	return HouseClass::Array->Items[idx];
+	return HouseClass::Array.Items[idx];
 }
 
 int BuildOffAnyBuilding::AnchorRuleFor(
