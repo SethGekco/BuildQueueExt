@@ -1243,3 +1243,56 @@ per-cell during cursor drawing, keyed off `CellClass::LandType`,
 `CellClass::SlopeIndex` and cell content. **Find and verify that seat before
 writing any of §8a.** Do not settle for a seat merely because it is on the
 placement path; `0x47C620` was on the placement path and still wrong.
+
+### §8e The left-click refund — located, not yet explained
+
+⚠ **Not caused by anything in §7.** The modder established that the **keyboard
+hotkey for placing a finished building works fine**, while **left-clicking the
+cameo cancels and refunds**. That rules out every verdict-side explanation:
+`StripClass::Recalc`'s abandon-on-`CanBuild==0` is not path-specific, so it would
+refund under the hotkey too. ⚠ The step-(f) commit message claims this as its
+motivation — that claim is **wrong** and is corrected here. Step (f) is still
+right on its own terms (a precise promote replacing a blunt override), but it did
+not fix this and the refund likely predates the whole session.
+
+**Located:** exactly one sidebar-range call to `FactoryClass::AbandonProduction`
+(`0x4C9FF0`), at **`0x6ABBDA`**. It sits in a loop that walks the strip's
+buildables — base `ESI+0x64`, stride `0x34`, count `[ESI+0x54]` — and for the
+entry whose factory matches `EDI`, calls `AbandonProduction`, zeroes the entry's
+first two dwords and sets a "something was cancelled" flag in `BL`. So this is
+the cancel-and-clear routine; the click is *reaching* it rather than reaching
+placement.
+
+**Still unknown:** the branch that chooses cancel over placement. Candidate from
+the earlier sidebar research, unverified: `0x6AB312` in the click path, which
+rejects to `0x6AB95A`.
+
+**Leading hypothesis, UNVERIFIED.** Placing a finished building needs a primary
+factory for the item's category, and for a `BuildCat=Combat` type that is
+`HouseClass::Primary_ForDefenses` (slot `0x53CC`), which is **null with no
+ConYard**. Phobos reads exactly that field in
+`CheckShouldDisableDefensesCameo`. The hotkey may instead reach the factory
+object directly. If this holds, the fix lands in machinery this project already
+has: `ChannelTable` hooks `GetPrimaryFactory` (`0x500510`) and its `Resolve` can
+answer for a channel with no real primary (§6, P2b-1).
+
+**Cheapest discriminator, costs no code:** try left-clicking a finished
+**non-defence** building (`BuildCat` other than `Combat`). If only defences
+refund, `Primary_ForDefenses` is confirmed and the hypothesis stands; if
+everything refunds, the cause is category-independent and `GetPrimaryFactory` is
+the wrong thread.
+
+### §8f Fixture error to stop repeating
+
+`Adjacent.NotRequired=yes` and `Adjacent.Anchor.*` are **mutually unobservable**.
+`NotRequired` short-circuits `PassesProximityCheck` at its ENTRY, so the anchor
+loop never executes and no anchor rule can fire. Both were armed together anyway,
+making the first anchor test meaningless — the log showed the tag parsed
+(`neutral=1`) and then `NotRequired SKIP #1` with zero anchor verdicts.
+
+⚠ This is the **fourth** fixture failure of this kind (after `GAPILE` destroyed
+mid-match, `GAPOWR` while playing Yuri, and `Foundation.Forbidden=road` reading
+as an adjacency bug). The rule: **before arming a test, check that no other armed
+tag short-circuits the code path being tested.** A warning comment written into
+the rules file does not count as checking — that exact warning was written here
+and then ignored in the same edit.
