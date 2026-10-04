@@ -1143,3 +1143,103 @@ rebuilt.
 11. **No-preempt veto seat** (§7f) — veto at the `0x4C9FF0` callee entry (owned,
     but the caller at `0x4502D6` reads state assuming the abandon happened) vs
     upstream at the decision in the contended `0x4502F4` region. A probe question.
+
+---
+
+## §8 — Placement permissions (asks #13–#15)
+
+Three requests, confirmed with the modder 2026-10-03. `Adjacent.NotRequired`
+(§7g) is **done and confirmed**: the pillbox could be built at any range yet
+still refused roads, cliffs, trees, water and buildings. These extend from there.
+
+### §8a The terrain/occupancy permission matrix
+
+```ini
+[SOMEBUILDING]
+Place.OnClearGround=no    ; DEFAULT YES -- the only VETO in the family
+Place.OnTrees=yes         ; default no
+Place.OnCliffs=yes        ; default no
+Place.OnBuildings=yes     ; default no
+Place.OnWater=yes         ; default no  -- see §8b
+```
+
+⚠ **The asymmetry that decides the architecture.** `OnClearGround=no` *adds* a
+veto; the other four *remove* one. Adding is easy and near-riskless. Removing
+requires knowing **why** the engine refused, and overriding only if the tag
+permits that specific reason — the same attribute-then-override discipline that
+made `ShouldDisableCameo` (§7f) safe. Misattribute and we grant something the
+engine refused for an unrelated reason.
+
+Agreed scope: **veto side first**, then the three allow cases (trees, cliffs,
+buildings), in that order of risk.
+
+⚠ `Place.OnBuildings` is the dangerous one. Two buildings owning one cell can
+confuse occupancy, targeting, repair and sell. Treat as experimental.
+
+### §8b Land/water, which is the same axis as `Naval=` / `WaterBound=`
+
+The modder's note: `Naval=yes` marks the building naval, `WaterBound=yes` helps
+the AI, and together they make it **water-only** — there is no way to say "both".
+So the land/water pair belongs in this family rather than as its own feature:
+
+```ini
+Place.OnWater=yes
+Place.OnLand=yes          ; default yes; set no with OnWater=yes for water-only
+```
+
+`WaterBound` is read at `0x45FF94` (BuildingType load) and consumed at
+`0x71DF1C`. Phobos already carries a related bugfix — "Naval=yes overrides
+WaterBound=no and prevents move orders onto Land cells"
+(`Phobos/src/Misc/Hooks.BugFixes.cpp:266`) — so expect interaction and check
+Phobos' behaviour before overriding either.
+
+### §8c Anchor scoping by house relationship
+
+Extends `BuildOffAnyBuilding` (§7g), which currently only widens the *own*
+building test. The seats are already mapped (§7g / encyclopedia
+Building-Placement-Proximity.md): the own branch is `0x4A8FE6`, the allied branch
+`0x4A8FFA`–`0x4A9027`.
+
+```ini
+Adjacent.Anchor.Owner=no     ; DEFAULT YES -- forbid anchoring on your OWN
+                             ; structures (modder's explicit request)
+Adjacent.Anchor.Ally=yes     ; vanilla: needs the 0xA8B264 global AND
+                             ; EligibileForAllyBuilding on the anchor
+Adjacent.Anchor.Team=yes
+Adjacent.Anchor.Enemy=yes
+Adjacent.Anchor.Neutral=yes
+```
+
+Use PrerequisiteExt's existing `HouseScope` vocabulary — Owner / Ally / Team /
+Enemy / Neutral / Global — so one set of names means one thing across the
+modder's projects.
+
+`Owner=no` is cheap and symmetric: we already intercept the own-building branch
+at `0x4A8FE6` to *accept*; forbidding is the same seat returning the skip target
+`0x4A8FFA` instead.
+
+### §8d SEAT STILL UNLOCATED for §8a/§8b — and two eliminated
+
+⚠ **`CellClass::CanThisExistHere` `0x47C620` is the WRONG seat.** It looked
+ideal — it takes `(SpeedType, BuildingTypeClass*, HouseClass*)`. But it has
+**10+ exits and 10+ call sites** across movement and deployment, so a placement
+veto there would also refuse unit pathing and MCV deploys. Phobos is inside it
+too (`0x47C640`, `CellClass_CanThisExistHere_IgnoreSomething`).
+
+Established about the placement path:
+
+- `DisplayClass::PassesProximityCheck` is `0x4A8EB0` (YRpp `DisplayClass.h:26`);
+  `0x4A8F20`, used by the §7g capture hook, is already past its prologue.
+- It has exactly **two** callers, `0x4A9480` and `0x4ABA59`, and both store the
+  result to **`DisplayClass + 0x1180`** — a cached proximity verdict.
+- The legality computation around those callers calls only three things:
+  `0x4A8EB0` (proximity), `0x4A9070` and `0x4A95A0`. **Neither of the latter two
+  is the terrain check** — `0x4A9070` reads the same house/mode globals and only
+  calls the foundation width/height helpers `0x45EC90`/`0x45ECA0`; `0x4A95A0`
+  calls `0x4A9770` and `0x4F4BB0` and looks like foundation marking.
+
+So the per-cell terrain/occupancy decision is reached some other way — likely
+per-cell during cursor drawing, keyed off `CellClass::LandType`,
+`CellClass::SlopeIndex` and cell content. **Find and verify that seat before
+writing any of §8a.** Do not settle for a seat merely because it is on the
+placement path; `0x47C620` was on the placement path and still wrong.
