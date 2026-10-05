@@ -28,6 +28,11 @@ struct AnchorRules
 
 static std::map<BuildingTypeClass*, AnchorRules> AnchorMap;
 
+// `Anchor.For<scope>` on the ANCHOR type -- the other half of the permission.
+// Same tri-state convention; -1 means "use the vanilla default for this scope",
+// which differs per scope (BaseNormal vs EligibileForAllyBuilding).
+static std::map<BuildingTypeClass*, AnchorRules> AnchorForMap;
+
 // Tri-state INI read. CCINIClass has no "is the key present" query, so read the
 // same key twice with opposite defaults: if both agree the key is really there,
 // and if they disagree it is absent and the current value is preserved. That
@@ -99,6 +104,34 @@ void BuildOffAnyBuilding::ReadTypeConfig(CCINIClass* pINI)
 					" ally=%d enemy=%d neutral=%d  (-1 = vanilla)\n",
 					pType->ID, rules.Owner, rules.Team, rules.Ally,
 					rules.Enemy, rules.Neutral);
+			}
+		}
+
+		// The ANCHOR side. Same tri-state and erase-if-unset discipline.
+		{
+			auto& f = AnchorForMap[pType];
+			AnchorRules const before = f;
+
+			f.Owner   = ReadTriState(pINI, pType->ID, "Anchor.ForOwner",   f.Owner);
+			f.Team    = ReadTriState(pINI, pType->ID, "Anchor.ForTeam",    f.Team);
+			f.Ally    = ReadTriState(pINI, pType->ID, "Anchor.ForAlly",    f.Ally);
+			f.Enemy   = ReadTriState(pINI, pType->ID, "Anchor.ForEnemy",   f.Enemy);
+			f.Neutral = ReadTriState(pINI, pType->ID, "Anchor.ForNeutral", f.Neutral);
+
+			if (!f.AnySet())
+			{
+				AnchorForMap.erase(pType);
+			}
+			else if (before.Owner != f.Owner || before.Team != f.Team
+				|| before.Ally != f.Ally || before.Enemy != f.Enemy
+				|| before.Neutral != f.Neutral)
+			{
+				Debug::Log("[BQExt] Anchor.For %s: owner=%d team=%d ally=%d"
+					" enemy=%d neutral=%d  (-1 = vanilla;"
+					" BaseNormal=%d EligibileForAlly=%d)\n",
+					pType->ID, f.Owner, f.Team, f.Ally, f.Enemy, f.Neutral,
+					pType->BaseNormal ? 1 : 0,
+					pType->EligibileForAllyBuilding ? 1 : 0);
 			}
 		}
 
@@ -254,21 +287,7 @@ int BuildOffAnyBuilding::AnchorVerdict(
 	if (AnchorMap.find(pPlacing) == AnchorMap.end())
 		return -1;
 
-	// Order matters: the scopes overlap, so the most specific wins. Neutral is
-	// tested before Ally/Enemy because a passive civilian house can read as
-	// "not allied" and would otherwise be judged an enemy.
-	AnchorScope scope;
-
-	if (pCellOwner == pAsking)
-		scope = AnchorScope::Owner;
-	else if (pCellOwner->IsNeutral())
-		scope = AnchorScope::Neutral;
-	else if (pAsking->IsMutualAlly(pCellOwner))
-		scope = AnchorScope::Team;
-	else if (pAsking->IsAlliedWith(pCellOwner))
-		scope = AnchorScope::Ally;
-	else
-		scope = AnchorScope::Enemy;
+	auto const scope = ClassifyScope(pAsking, pCellOwner);
 
 	int rule = AnchorRuleFor(pPlacing, scope);
 
@@ -318,4 +337,84 @@ bool BuildOffAnyBuilding::ForbidsOwnAnchor(BuildingClass* pCellBuilding)
 	}
 
 	return true;
+}
+
+BuildOffAnyBuilding::AnchorScope BuildOffAnyBuilding::ClassifyScope(
+	HouseClass* pAsking, HouseClass* pCellOwner)
+{
+	// Order matters: the scopes overlap, so the most specific wins. Neutral is
+	// tested before Ally/Enemy because a passive civilian house reads as
+	// "not allied" and would otherwise be judged an enemy.
+	if (pCellOwner == pAsking)
+		return AnchorScope::Owner;
+
+	if (pCellOwner->IsNeutral())
+		return AnchorScope::Neutral;
+
+	if (pAsking->IsMutualAlly(pCellOwner))
+		return AnchorScope::Team;
+
+	if (pAsking->IsAlliedWith(pCellOwner))
+		return AnchorScope::Ally;
+
+	return AnchorScope::Enemy;
+}
+
+static int AnchorForRule(
+	BuildingTypeClass* pType, BuildOffAnyBuilding::AnchorScope scope)
+{
+	using Scope = BuildOffAnyBuilding::AnchorScope;
+
+	auto const it = AnchorForMap.find(pType);
+
+	if (it == AnchorForMap.end())
+		return -1;
+
+	switch (scope)
+	{
+	case Scope::Owner:   return it->second.Owner;
+	case Scope::Team:    return it->second.Team;
+	case Scope::Ally:    return it->second.Ally;
+	case Scope::Enemy:   return it->second.Enemy;
+	case Scope::Neutral: return it->second.Neutral;
+	}
+
+	return -1;
+}
+
+bool BuildOffAnyBuilding::AnchorAllowsScope(
+	BuildingTypeClass* pAnchorType, AnchorScope scope)
+{
+	if (!pAnchorType)
+		return false;
+
+	int const explicitRule = AnchorForRule(pAnchorType, scope);
+
+	if (explicitRule >= 0)
+		return explicitRule > 0;
+
+	// Unset -> the VANILLA opinion for this scope, which is not the same key in
+	// every case. Owner is BaseNormal. Allies have their own dedicated field.
+	// Enemy and Neutral have no vanilla key at all, so they fall back to
+	// BaseNormal as the nearest expression of "is this base-extending".
+	switch (scope)
+	{
+	case AnchorScope::Team:
+	case AnchorScope::Ally:
+		return pAnchorType->EligibileForAllyBuilding;
+
+	case AnchorScope::Owner:
+	case AnchorScope::Enemy:
+	case AnchorScope::Neutral:
+	default:
+		return pAnchorType->BaseNormal;
+	}
+}
+
+int BuildOffAnyBuilding::AnchorForOwnerRule(BuildingClass* pCellBuilding)
+{
+	if (!Enabled || !pCellBuilding || !pCellBuilding->Type)
+		return -1;
+
+	return AnchorForRule(pCellBuilding->Type, AnchorScope::Owner);
 }

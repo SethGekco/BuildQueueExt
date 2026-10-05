@@ -172,4 +172,54 @@ public:
 	// Adjacent.Anchor.Owner=no for the type currently being placed, with the
 	// cell building confirmed to belong to the asking house.
 	static bool ForbidsOwnAnchor(BuildingClass* pCellBuilding);
+
+	// ===================================================================
+	// `Anchor.For<scope>=` — the OTHER SIDE of the same permission.
+	//
+	// Anchoring has TWO opinions, and vanilla already expresses both:
+	//
+	//   the PLACED type's      "I may anchor on <scope> buildings"
+	//                          -> our Adjacent.Anchor.<scope>
+	//   the ANCHOR type's      "<scope> may anchor on me"
+	//                          -> vanilla BaseNormal (owner) and
+	//                             EligibileForAllyBuilding (allies)
+	//
+	// The first cut only implemented the placed side, so an accept bypassed the
+	// anchor's opinion entirely -- which is exactly what the modder caught:
+	// `Adjacent.Anchor.Neutral=yes` anchored on civilian buildings INCLUDING
+	// `BaseNormal=no` ones, because nothing consulted the anchor.
+	//
+	// So this generalises vanilla's two keys to all five scopes:
+	//
+	//   [SOMEANCHOR]
+	//   Anchor.ForOwner=yes    ; generalises BaseNormal
+	//   Anchor.ForAlly=yes     ; generalises EligibileForAllyBuilding
+	//   Anchor.ForTeam=yes
+	//   Anchor.ForEnemy=no
+	//   Anchor.ForNeutral=no
+	//
+	// DEFAULTS PRESERVE VANILLA, which is why each one differs:
+	//   Owner        -> BaseNormal
+	//   Team, Ally   -> EligibileForAllyBuilding
+	//   Enemy, Neutral -> BaseNormal, because vanilla has no dedicated key for
+	//                   these and BaseNormal is its nearest notion of "is this a
+	//                   base-extending structure at all"
+	//
+	// ⚠ Both sides must agree. The placed type opting in is necessary but not
+	// sufficient -- a defence with BaseNormal=no still will not anchor anything
+	// unless its own Anchor.For<scope> says so. That keeps the modder's stated
+	// vanilla model intact: "BaseNormal=no ... means the owner cannot build off
+	// it, but they may build around it by building off a different nearby
+	// structure".
+	static bool AnchorAllowsScope(BuildingTypeClass* pAnchorType,
+		AnchorScope scope);
+
+	// Exposed so the hook can pass the same scope to both sides rather than
+	// classifying twice and risking the two disagreeing.
+	static AnchorScope ClassifyScope(HouseClass* pAsking,
+		HouseClass* pCellOwner);
+
+	// Tri-state `Anchor.ForOwner` for the own branch: -1 unset (use BaseNormal,
+	// i.e. vanilla), 0 forbidden, 1 allowed.
+	static int AnchorForOwnerRule(BuildingClass* pCellBuilding);
 };

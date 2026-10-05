@@ -60,6 +60,15 @@ DEFINE_HOOK(0x4A8FE6, BQExt_DisplayClass_PassesProximityCheck_BaseNormal, 0x6)
 	if (BuildOffAnyBuilding::ForbidsOwnAnchor(pCellBuilding))
 		return SkipBuilding;
 
+	// Anchor.ForOwner on the ANCHOR generalises BaseNormal: set explicitly it
+	// supersedes the vanilla field the next instruction is about to test, so a
+	// BaseNormal=no defence can be made owner-anchorable without the blunt
+	// BuildOffAnyBuilding, and a BaseNormal=yes building can be excluded.
+	int const forOwner = BuildOffAnyBuilding::AnchorForOwnerRule(pCellBuilding);
+
+	if (forOwner >= 0)
+		return forOwner > 0 ? AcceptAnchor : SkipBuilding;
+
 	if (BuildOffAnyBuilding::ShouldIgnoreBaseNormal(pCellBuilding))
 		return AcceptAnchor;
 
@@ -175,5 +184,17 @@ DEFINE_HOOK(0x4A8FFA, BQExt_DisplayClass_PassesProximityCheck_AnchorScope, 0x6)
 	if (verdict < 0)
 		return 0;        // unset -> leave the engine's own ally logic alone
 
-	return verdict > 0 ? AcceptAnchor : SkipBuilding;
+	if (verdict == 0)
+		return SkipBuilding;
+
+	// BOTH SIDES MUST AGREE. The placed type opting in is necessary but not
+	// sufficient: the ANCHOR gets a say too, defaulting to the vanilla field for
+	// that scope. Without this, Adjacent.Anchor.Neutral=yes anchored on civilian
+	// buildings including BaseNormal=no ones -- the modder caught exactly that.
+	auto const scope = BuildOffAnyBuilding::ClassifyScope(pAsking, pCellOwner);
+
+	if (!BuildOffAnyBuilding::AnchorAllowsScope(pCellBuilding->Type, scope))
+		return SkipBuilding;
+
+	return AcceptAnchor;
 }
