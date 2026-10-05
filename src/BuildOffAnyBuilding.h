@@ -219,6 +219,53 @@ public:
 	static AnchorScope ClassifyScope(HouseClass* pAsking,
 		HouseClass* pCellOwner);
 
+	// ===================================================================
+	// `Repel.<scope>=` — a HARD VETO, which the anchor keys cannot express.
+	//
+	// The modder's observation, and it is exactly right: the anchor keys are
+	// "for who is allowed", not for banning. `Adjacent.Anchor.Owner=no` stops
+	// your own buildings COUNTING as anchors, but placement still succeeds if
+	// some other qualifying building is in range -- so you can still build next
+	// to your own base by anchoring off a civilian structure beside it.
+	//
+	// ⚠ THAT IS A QUANTIFIER DIFFERENCE, NOT A MISSING FLAG.
+	// `PassesProximityCheck` is an **OR over cells**: the accumulator byte at
+	// [ESP+0x3C] is only ever SET, never cleared, so one accepting cell carries
+	// the whole call. A ban is **NOT-EXISTS over cells** -- no cell in range may
+	// hold a repelling building. No per-cell accept/skip return can express
+	// that, because a later cell can always re-accept. The veto has to fail the
+	// WHOLE function.
+	//
+	//   [SOMEBUILDING]
+	//   Repel.Enemy=yes        ; the headline case -- cannot be built inside
+	//                          ; another player's base
+	//   Repel.Owner=yes
+	//   Repel.Team=yes
+	//   Repel.Ally=yes
+	//   Repel.Neutral=yes
+	//   Repel.Range=10         ; default: this type's own Adjacent
+	//
+	// All default to NO, so the family is inert until asked for.
+	//
+	// SEAT: the function entry 0x4A8EB0, which we already own. Returning EAX=0
+	// and jumping to the bare `ret 0x10` at 0x4A9059 fails the check outright --
+	// the same early-return trick `Adjacent.NotRequired` uses, with the opposite
+	// value.
+	//
+	// ⚠ ORDER IS LOAD-BEARING: the repel test runs BEFORE
+	// `Adjacent.NotRequired`, or a type carrying both would have its ban
+	// silently bypassed by its own convenience tag.
+	//
+	// ⚠ This does its OWN cell scan rather than reusing the engine's loop,
+	// because the engine's is wired to the accept quantifier. Range is therefore
+	// a square around `currentPosition` rather than the exact foundation
+	// rectangle -- close enough for a keep-out radius, and `Repel.Range` exists
+	// precisely because a useful keep-out is usually larger than `Adjacent`.
+	// The range is CLAMPED (see the .cpp) because a large placement-time scan is
+	// the known cause of the high-`Adjacent` slowdown.
+	static bool IsRepelled(void* pTypeRaw, int houseArrayIndex,
+		CellStruct* pPosition);
+
 	// Tri-state `Anchor.ForOwner` for the own branch: -1 unset (use BaseNormal,
 	// i.e. vanilla), 0 forbidden, 1 allowed.
 	static int AnchorForOwnerRule(BuildingClass* pCellBuilding);

@@ -1,6 +1,8 @@
 #include "BuildOffAnyBuilding.h"
 
 #include <CCINIClass.h>
+#include <MapClass.h>
+#include <CellClass.h>
 
 #include <map>
 #include <Utilities/Debug.h>
@@ -32,6 +34,18 @@ static std::map<BuildingTypeClass*, AnchorRules> AnchorMap;
 // Same tri-state convention; -1 means "use the vanilla default for this scope",
 // which differs per scope (BaseNormal vs EligibileForAllyBuilding).
 static std::map<BuildingTypeClass*, AnchorRules> AnchorForMap;
+
+// `Repel.<scope>` on the PLACED type -- the hard veto. Same tri-state storage,
+// but -1 and 0 both mean "do not repel": there is no vanilla behaviour to
+// preserve here, so absent simply means off.
+static std::map<BuildingTypeClass*, AnchorRules> RepelMap;
+static std::map<BuildingTypeClass*, int> RepelRangeMap;
+static int Repels = 0;
+
+// A placement-time scan is the known cause of the high-Adjacent slowdown, and a
+// repel scan runs on every cursor move. 32 cells is a 65x65 window, already far
+// larger than any sane keep-out, and it bounds the worst case.
+static int const RepelRangeCap = 32;
 
 // Tri-state INI read. CCINIClass has no "is the key present" query, so read the
 // same key twice with opposite defaults: if both agree the key is really there,
@@ -132,6 +146,57 @@ void BuildOffAnyBuilding::ReadTypeConfig(CCINIClass* pINI)
 					pType->ID, f.Owner, f.Team, f.Ally, f.Enemy, f.Neutral,
 					pType->BaseNormal ? 1 : 0,
 					pType->EligibileForAllyBuilding ? 1 : 0);
+			}
+		}
+
+		// Repel. -1 and 0 both mean off, so there is no erase-if-unset dance;
+		// the map is only populated when something is actually set.
+		{
+			auto& r = RepelMap[pType];
+			AnchorRules const before = r;
+
+			r.Owner   = ReadTriState(pINI, pType->ID, "Repel.Owner",   r.Owner);
+			r.Team    = ReadTriState(pINI, pType->ID, "Repel.Team",    r.Team);
+			r.Ally    = ReadTriState(pINI, pType->ID, "Repel.Ally",    r.Ally);
+			r.Enemy   = ReadTriState(pINI, pType->ID, "Repel.Enemy",   r.Enemy);
+			r.Neutral = ReadTriState(pINI, pType->ID, "Repel.Neutral", r.Neutral);
+
+			bool const anyOn = r.Owner > 0 || r.Team > 0 || r.Ally > 0
+				|| r.Enemy > 0 || r.Neutral > 0;
+
+			if (!anyOn)
+			{
+				RepelMap.erase(pType);
+				RepelRangeMap.erase(pType);
+			}
+			else
+			{
+				int range = pINI->ReadInteger(
+					pType->ID, "Repel.Range", pType->Adjacent);
+
+				if (range > RepelRangeCap)
+				{
+					Debug::Log("[BQExt] Repel.Range %s: %d CLAMPED to %d --"
+						" a placement-time scan this large is the known cause"
+						" of the high-Adjacent slowdown\n",
+						pType->ID, range, RepelRangeCap);
+					range = RepelRangeCap;
+				}
+
+				if (range < 0)
+					range = 0;
+
+				RepelRangeMap[pType] = range;
+
+				if (before.Owner != r.Owner || before.Team != r.Team
+					|| before.Ally != r.Ally || before.Enemy != r.Enemy
+					|| before.Neutral != r.Neutral)
+				{
+					Debug::Log("[BQExt] Repel %s: owner=%d team=%d ally=%d"
+						" enemy=%d neutral=%d range=%d\n",
+						pType->ID, r.Owner, r.Team, r.Ally, r.Enemy,
+						r.Neutral, range);
+				}
 			}
 		}
 
@@ -417,4 +482,87 @@ int BuildOffAnyBuilding::AnchorForOwnerRule(BuildingClass* pCellBuilding)
 		return -1;
 
 	return AnchorForRule(pCellBuilding->Type, AnchorScope::Owner);
+}
+
+bool BuildOffAnyBuilding::IsRepelled(
+	void* pTypeRaw, int houseArrayIndex, CellStruct* pPosition)
+{
+	if (!Enabled || !pTypeRaw || !pPosition || RepelMap.empty())
+		return false;
+
+	// Pointer identity only, same discipline as SkipsProximityCheck: RepelMap
+	// is populated solely from BuildingTypeClass::Array, so a non-BuildingType
+	// cannot match and is never dereferenced.
+	auto const pPlacing = reinterpret_cast<BuildingTypeClass*>(pTypeRaw);
+
+	auto const it = RepelMap.find(pPlacing);
+
+	if (it == RepelMap.end())
+		return false;
+
+	auto const pAsking = HouseByIndex(houseArrayIndex);
+
+	if (!pAsking)
+		return false;
+
+	auto const rangeIt = RepelRangeMap.find(pPlacing);
+	int const range = rangeIt != RepelRangeMap.end() ? rangeIt->second : 0;
+
+	for (int dy = -range; dy <= range; ++dy)
+	{
+		for (int dx = -range; dx <= range; ++dx)
+		{
+			CellStruct probe;
+			probe.X = static_cast<short>(pPosition->X + dx);
+			probe.Y = static_cast<short>(pPosition->Y + dy);
+
+			// TryGetCellAt, not GetCellAt: a probe near the map edge is normal
+			// here, not exceptional, and the engine's unchecked accessor would
+			// hand back the out-of-bounds sentinel cell.
+			auto const pCell = MapClass::Instance.TryGetCellAt(probe);
+
+			if (!pCell)
+				continue;
+
+			auto const pBld = pCell->GetBuilding();
+
+			if (!pBld || !pBld->IsAlive || pBld->InLimbo || !pBld->Owner)
+				continue;
+
+			auto const scope = ClassifyScope(pAsking, pBld->Owner);
+			int rule = -1;
+
+			switch (scope)
+			{
+			case AnchorScope::Owner:   rule = it->second.Owner;   break;
+			case AnchorScope::Team:    rule = it->second.Team;    break;
+			case AnchorScope::Ally:    rule = it->second.Ally;    break;
+			case AnchorScope::Enemy:   rule = it->second.Enemy;   break;
+			case AnchorScope::Neutral: rule = it->second.Neutral; break;
+			}
+
+			// A mutual ally is also an ally, same fallback as the anchor side.
+			if (rule <= 0 && scope == AnchorScope::Team && it->second.Ally > 0)
+				rule = 1;
+
+			if (rule <= 0)
+				continue;
+
+			if (++Repels == 1 || Repels % 500 == 0)
+			{
+				static char const* const names[] =
+					{ "Owner", "Team", "Ally", "Enemy", "Neutral" };
+
+				Debug::Log("[BQExt] Repel #%d placing=%s REFUSED --"
+					" %s house's %s within %d cells\n",
+					Repels, pPlacing->ID,
+					names[static_cast<int>(scope)],
+					pBld->Type ? pBld->Type->ID : "(?)", range);
+			}
+
+			return true;
+		}
+	}
+
+	return false;
 }

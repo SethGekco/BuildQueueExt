@@ -108,7 +108,20 @@ DEFINE_HOOK(0x4A8EB0, BQExt_DisplayClass_PassesProximityCheck_TrueEntry, 0x5)
 {
 	enum { ReturnTrue = 0x4A9059 };   // bare `ret 0x10`
 
+	enum { ReturnFalse = 0x4A9059 };  // same bare `ret 0x10`, EAX=0 instead
+
 	GET_STACK(void*, pType, 0x4);
+	GET_STACK(int const, houseArrayIndex, 0x8);
+	GET_STACK(CellStruct*, pPosition, 0x10);
+
+	// ⚠ REPEL FIRST. Checked before Adjacent.NotRequired, or a type carrying
+	// both would have its own keep-out rule silently bypassed by its own
+	// convenience tag. A ban must beat a grant.
+	if (BuildOffAnyBuilding::IsRepelled(pType, houseArrayIndex, pPosition))
+	{
+		R->EAX(0);
+		return ReturnFalse;
+	}
 
 	if (BuildOffAnyBuilding::SkipsProximityCheck(pType))
 	{
