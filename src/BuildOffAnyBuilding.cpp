@@ -40,6 +40,10 @@ static std::map<BuildingTypeClass*, AnchorRules> AnchorForMap;
 // preserve here, so absent simply means off.
 static std::map<BuildingTypeClass*, AnchorRules> RepelMap;
 static std::map<BuildingTypeClass*, int> RepelRangeMap;
+
+// `Repel.For<scope>` on the REPELLING building -- the other half, symmetric
+// with AnchorForMap. Unset falls back to RepelForDefault, NOT to off.
+static std::map<BuildingTypeClass*, AnchorRules> RepelForMap;
 static int Repels = 0;
 
 // A placement-time scan is the known cause of the high-Adjacent slowdown, and a
@@ -65,6 +69,10 @@ static int ReadTriState(
 }
 bool BuildOffAnyBuilding::Enabled = false;
 
+// Defaults YES, following BaseNormal's shape: most buildings repel and specific
+// ones opt out. Flip to no for the "only Construction Yards repel" pattern.
+bool BuildOffAnyBuilding::RepelForDefault = true;
+
 static BuildingTypeClass* PlacingType = nullptr;
 static int Accepts = 0;
 static int EntryCalls = 0;
@@ -78,6 +86,8 @@ void BuildOffAnyBuilding::ReadGlobalConfig(CCINIClass* pINI)
 	// once per INI and a literal would switch this off on the map pass.
 	Enabled = pINI->ReadBool(
 		"BuildQueueExt", "BuildOffAnyBuilding.Enabled", Enabled);
+	RepelForDefault = pINI->ReadBool(
+		"BuildQueueExt", "Repel.ForDefault", RepelForDefault);
 }
 
 void BuildOffAnyBuilding::ReadTypeConfig(CCINIClass* pINI)
@@ -197,6 +207,33 @@ void BuildOffAnyBuilding::ReadTypeConfig(CCINIClass* pINI)
 						pType->ID, r.Owner, r.Team, r.Ally, r.Enemy,
 						r.Neutral, range);
 				}
+			}
+		}
+
+		// The REPELLER side. Unset means RepelForDefault, so unlike the other
+		// families an all-unset entry still matters -- hence no erase.
+		{
+			auto& rf = RepelForMap[pType];
+			AnchorRules const before = rf;
+
+			rf.Owner   = ReadTriState(pINI, pType->ID, "Repel.ForOwner",   rf.Owner);
+			rf.Team    = ReadTriState(pINI, pType->ID, "Repel.ForTeam",    rf.Team);
+			rf.Ally    = ReadTriState(pINI, pType->ID, "Repel.ForAlly",    rf.Ally);
+			rf.Enemy   = ReadTriState(pINI, pType->ID, "Repel.ForEnemy",   rf.Enemy);
+			rf.Neutral = ReadTriState(pINI, pType->ID, "Repel.ForNeutral", rf.Neutral);
+
+			if (!rf.AnySet())
+			{
+				RepelForMap.erase(pType);
+			}
+			else if (before.Owner != rf.Owner || before.Team != rf.Team
+				|| before.Ally != rf.Ally || before.Enemy != rf.Enemy
+				|| before.Neutral != rf.Neutral)
+			{
+				Debug::Log("[BQExt] Repel.For %s: owner=%d team=%d ally=%d"
+					" enemy=%d neutral=%d  (-1 = global default %d)\n",
+					pType->ID, rf.Owner, rf.Team, rf.Ally, rf.Enemy,
+					rf.Neutral, RepelForDefault ? 1 : 0);
 			}
 		}
 
@@ -548,6 +585,13 @@ bool BuildOffAnyBuilding::IsRepelled(
 			if (rule <= 0)
 				continue;
 
+			// BOTH SIDES MUST AGREE. The placed type opting in is necessary but
+			// not sufficient -- the building in range must also claim to repel
+			// this scope. Unset defaults to RepelForDefault (yes), so the
+			// one-tag case still behaves as before.
+			if (!RepelsScope(pBld->Type, scope))
+				continue;
+
 			if (++Repels == 1 || Repels % 500 == 0)
 			{
 				static char const* const names[] =
@@ -565,4 +609,36 @@ bool BuildOffAnyBuilding::IsRepelled(
 	}
 
 	return false;
+}
+
+bool BuildOffAnyBuilding::RepelsScope(
+	BuildingTypeClass* pRepellerType, AnchorScope scope)
+{
+	if (!pRepellerType)
+		return false;
+
+	auto const it = RepelForMap.find(pRepellerType);
+
+	if (it == RepelForMap.end())
+		return RepelForDefault;
+
+	int rule = -1;
+
+	switch (scope)
+	{
+	case AnchorScope::Owner:   rule = it->second.Owner;   break;
+	case AnchorScope::Team:    rule = it->second.Team;    break;
+	case AnchorScope::Ally:    rule = it->second.Ally;    break;
+	case AnchorScope::Enemy:   rule = it->second.Enemy;   break;
+	case AnchorScope::Neutral: rule = it->second.Neutral; break;
+	}
+
+	// A mutual ally is also an ally, same fallback both other families use.
+	if (rule < 0 && scope == AnchorScope::Team)
+		rule = it->second.Ally;
+
+	if (rule < 0)
+		return RepelForDefault;
+
+	return rule > 0;
 }

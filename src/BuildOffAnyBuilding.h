@@ -266,6 +266,41 @@ public:
 	static bool IsRepelled(void* pTypeRaw, int houseArrayIndex,
 		CellStruct* pPosition);
 
+	// ===================================================================
+	// `Repel.For<scope>=` — the REPELLER's half, symmetric with Anchor.For.
+	//
+	// The modder asked for repel to take the same two-sided shape as anchoring,
+	// and the vanilla analogy is theirs: `BaseNormal` and
+	// `EligibileForAllyBuilding` are the ANCHOR's opinion about who may build
+	// off it. The mirror is the REPELLER's opinion about whose construction it
+	// pushes away:
+	//
+	//   [SOMEREPELLER]
+	//   Repel.ForEnemy=yes     ; I push enemy construction away from me
+	//   Repel.ForOwner=yes
+	//   Repel.ForTeam=yes
+	//   Repel.ForAlly=yes
+	//   Repel.ForNeutral=yes
+	//
+	// BOTH SIDES MUST AGREE, exactly like the anchor family: the placed type
+	// must opt in to being repelled AND the building in range must claim to
+	// repel that scope.
+	//
+	// ⚠ THE TWO SIDES HAVE OPPOSITE DEFAULTS, AND THAT IS DELIBERATE.
+	// `Repel.<scope>` defaults to NO -- nothing is repelled unless asked. But
+	// `Repel.For<scope>` defaults to **YES**, following `BaseNormal`'s shape:
+	// most buildings participate and specific ones opt out. So the simple case
+	// stays one tag -- `Repel.Enemy=yes` alone gives a keep-out from every enemy
+	// building -- and `Repel.ForEnemy=no` on walls then excludes the clutter.
+	//
+	// For the opposite polarity -- the modder's "typically only Construction
+	// Yard" pattern, where you want ONLY base cores to repel -- flip the global
+	// once with `[BuildQueueExt] Repel.ForDefault=no` and opt the few in. Doing
+	// that per building would otherwise mean tagging every structure in the mod.
+	static bool RepelForDefault;
+	static bool RepelsScope(BuildingTypeClass* pRepellerType,
+		AnchorScope scope);
+
 	// Tri-state `Anchor.ForOwner` for the own branch: -1 unset (use BaseNormal,
 	// i.e. vanilla), 0 forbidden, 1 allowed.
 	static int AnchorForOwnerRule(BuildingClass* pCellBuilding);
