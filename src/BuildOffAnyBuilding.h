@@ -120,6 +120,10 @@ public:
 	// discipline in AlwaysAvailable.
 	static bool SkipsProximityCheck(void* pType);
 
+	// The type captured at the proximity entry (0x4A8F20). Both per-cell hooks
+	// need it, and neither can read it from a register by that point.
+	static BuildingTypeClass* PlacingTypeNow();
+
 	// ⚠ THE BOOLEAN SCOPE FAMILIES THAT USED TO LIVE HERE ARE GONE.
 	// Adjacent.Anchor.<scope>, Anchor.For<scope>, Repel.<scope> and
 	// Repel.For<scope> reached 20 keys expressing one idea badly, and the

@@ -8,6 +8,13 @@ std::set<BuildingTypeClass*> BuildOffAnyBuilding::Types;
 std::set<BuildingTypeClass*> BuildOffAnyBuilding::NoProximityTypes;
 bool BuildOffAnyBuilding::Enabled = false;
 static int ProximitySkips = 0;
+static int Accepts = 0;
+static int EntryCalls = 0;
+
+// The type currently being PLACED, captured at the proximity function entry.
+// Needed because by the time the per-cell loop runs it is in no register -- see
+// the header's note on why Phobos' copy cannot be shared.
+static BuildingTypeClass* PlacingType = nullptr;
 
 void BuildOffAnyBuilding::ReadGlobalConfig(CCINIClass* pINI)
 {
