@@ -1,4 +1,23 @@
 #include "BuildOffAnyBuilding.h"
+#include "AdjacentClasses.h"
+
+#include <MapClass.h>
+#include <CellClass.h>
+#include <Utilities/Debug.h>
+
+static int BQExt_Repels = 0;
+
+static void BQExt_LogRepel(BuildingTypeClass* pPlacing,
+	AdjacentClasses::Scope scope, BuildingTypeClass* pBlocker, int range)
+{
+	if (++BQExt_Repels == 1 || BQExt_Repels % 500 == 0)
+	{
+		Debug::Log("[BQExt] Repel #%d placing=%s REFUSED -- %s house's %s"
+			" within %d cells\n",
+			BQExt_Repels, pPlacing->ID, AdjacentClasses::ScopeName(scope),
+			pBlocker->ID, range);
+	}
+}
 
 #include <Utilities/Macro.h>
 
@@ -53,26 +72,111 @@ DEFINE_HOOK(0x4A8FE6, BQExt_DisplayClass_PassesProximityCheck_BaseNormal, 0x6)
 	enum { AcceptAnchor = 0x4A8FF5, SkipBuilding = 0x4A902C };
 
 	GET(BuildingClass*, pCellBuilding, ESI);
+	GET_STACK(int const, houseArrayIndex, STACK_OFFSET(0x30, 0x8));
 
-	// Adjacent.Anchor.Owner=no. Checked FIRST: a forbid must beat
-	// BuildOffAnyBuilding's accept, or the two tags would contradict each other
-	// on a BaseNormal=no building owned by the asking house.
-	if (BuildOffAnyBuilding::ForbidsOwnAnchor(pCellBuilding))
-		return SkipBuilding;
+	auto const pPlacing = BuildOffAnyBuilding::PlacingTypeNow();
 
-	// Anchor.ForOwner on the ANCHOR generalises BaseNormal: set explicitly it
-	// supersedes the vanilla field the next instruction is about to test, so a
-	// BaseNormal=no defence can be made owner-anchorable without the blunt
-	// BuildOffAnyBuilding, and a BaseNormal=yes building can be excluded.
-	int const forOwner = BuildOffAnyBuilding::AnchorForOwnerRule(pCellBuilding);
+	// Adjacent.Owner.Type on the placed type REPLACES the BaseNormal test the
+	// next instruction is about to perform. Reaching 0x4A8FE6 already proves
+	// this building belongs to the asking house, so the scope is Owner by
+	// construction and needs no re-derivation.
+	if (AdjacentClasses::HasAnchorRule(pPlacing, AdjacentClasses::Scope::Owner)
+		&& pCellBuilding && pCellBuilding->Type)
+	{
+		int const range = AdjacentClasses::AnchorRange(
+			pPlacing, AdjacentClasses::Scope::Owner, pCellBuilding->Type);
 
-	if (forOwner >= 0)
-		return forOwner > 0 ? AcceptAnchor : SkipBuilding;
+		// -1 means the candidate is in none of the classes the rule names, so
+		// the rule refuses it -- a rule REPLACES vanilla rather than adding to
+		// it, which is what makes restriction possible at all.
+		return range >= 0 ? AcceptAnchor : SkipBuilding;
+	}
 
 	if (BuildOffAnyBuilding::ShouldIgnoreBaseNormal(pCellBuilding))
 		return AcceptAnchor;
 
 	return 0;
+}
+
+// The REPEL scan. Lives here rather than in AdjacentClasses because it is the
+// only part that needs the map, and because it is a DIFFERENT QUANTIFIER from
+// everything in the engine's loop.
+//
+// ⚠ WHY A SEPARATE SCAN AT ALL. PassesProximityCheck is an **OR over cells** --
+// the accumulator at [ESP+0x3C] is only ever SET, never cleared, so one
+// accepting cell carries the whole call. A keep-out is **NOT-EXISTS over
+// cells**, which no per-cell accept/skip return can express because a later
+// cell always re-accepts. So repel has to fail the whole function, from the
+// entry, before any accept can happen.
+//
+// It also means repel is NOT bound by the engine's Adjacent+1 window, unlike
+// the anchor ranges which are clamped to it.
+static bool BQExt_RepelScan(
+	void* pTypeRaw, int houseArrayIndex, CellStruct* pPosition)
+{
+	if (!pTypeRaw || !pPosition || !AdjacentClasses::AnyRepelConfigured())
+		return false;
+
+	// Pointer identity only -- never dereferenced unless it matches a type we
+	// put in the table ourselves.
+	auto const pPlacing = reinterpret_cast<BuildingTypeClass*>(pTypeRaw);
+	int const range = AdjacentClasses::MaxRepelRange(pPlacing);
+
+	if (range <= 0)
+		return false;
+
+	auto const pAsking = AdjacentClasses::HouseByIndex(houseArrayIndex);
+
+	if (!pAsking)
+		return false;
+
+	for (int dy = -range; dy <= range; ++dy)
+	{
+		for (int dx = -range; dx <= range; ++dx)
+		{
+			CellStruct probe;
+			probe.X = static_cast<short>(pPosition->X + dx);
+			probe.Y = static_cast<short>(pPosition->Y + dy);
+
+			// TryGetCellAt, not GetCellAt: probing past the map edge is normal
+			// here, and the unchecked accessor hands back the out-of-bounds
+			// sentinel cell rather than null.
+			auto const pCell = MapClass::Instance.TryGetCellAt(probe);
+
+			if (!pCell)
+				continue;
+
+			auto const pBld = pCell->GetBuilding();
+
+			if (!pBld || !pBld->IsAlive || pBld->InLimbo
+				|| !pBld->Owner || !pBld->Type)
+			{
+				continue;
+			}
+
+			auto const scope = AdjacentClasses::Classify(pAsking, pBld->Owner);
+			int const repel = AdjacentClasses::RepelRange(
+				pPlacing, scope, pBld->Type);
+
+			if (repel < 0)
+				continue;
+
+			// MaxRepelRange sized the window for the WIDEST class; this
+			// candidate's own class may repel over a shorter distance, so the
+			// per-class range is re-checked here. Chebyshev distance, matching
+			// the square window the engine itself uses for Adjacent.
+			int const adx = dx < 0 ? -dx : dx;
+			int const ady = dy < 0 ? -dy : dy;
+
+			if ((adx > ady ? adx : ady) > repel)
+				continue;
+
+			BQExt_LogRepel(pPlacing, scope, pBld->Type, repel);
+			return true;
+		}
+	}
+
+	return false;
 }
 
 // DisplayClass::PassesProximityCheck TRUE ENTRY @ 0x4A8EB0 — `Adjacent.NotRequired`.
@@ -117,7 +221,7 @@ DEFINE_HOOK(0x4A8EB0, BQExt_DisplayClass_PassesProximityCheck_TrueEntry, 0x5)
 	// ⚠ REPEL FIRST. Checked before Adjacent.NotRequired, or a type carrying
 	// both would have its own keep-out rule silently bypassed by its own
 	// convenience tag. A ban must beat a grant.
-	if (BuildOffAnyBuilding::IsRepelled(pType, houseArrayIndex, pPosition))
+	if (BQExt_RepelScan(pType, houseArrayIndex, pPosition))
 	{
 		R->EAX(0);
 		return ReturnFalse;
@@ -172,42 +276,42 @@ DEFINE_HOOK(0x4A8FFA, BQExt_DisplayClass_PassesProximityCheck_AnchorScope, 0x6)
 	// FORWARD. Every "accept" and "skip" label inside the per-cell loop is a
 	// fall-through into the next step, so a backward target re-enters whatever
 	// hook sits between it and X.
+	// ⚠⚠ ACCEPT IS 0x4A9027 HERE, **NOT** 0x4A8FF5 — AND THE DIFFERENCE HUNG
+	// THE GAME. 0x4A8FF5 is the accept instruction and it FALLS THROUGH into
+	// 0x4A8FFA, which is this very hook, so returning it is a BACKWARD jump
+	// into a two-instruction infinite loop. 0x4A9027 is the byte-for-byte
+	// identical accept at the end of the vanilla ally branch and falls into the
+	// loop-continue at 0x4A902C.
+	//
+	// RULE for this function: from a hook at X, only ever jump FORWARD.
 	enum { AcceptAnchor = 0x4A9027, SkipBuilding = 0x4A902C };
 
 	GET(BuildingClass*, pCellBuilding, ESI);
 	GET_STACK(int const, houseArrayIndex, STACK_OFFSET(0x30, 0x8));
 
-	if (!pCellBuilding)
+	if (!pCellBuilding || !pCellBuilding->Type)
 		return 0;
 
 	auto const pCellOwner = pCellBuilding->Owner;
-	auto const pAsking = BuildOffAnyBuilding::HouseByIndex(houseArrayIndex);
+	auto const pAsking = AdjacentClasses::HouseByIndex(houseArrayIndex);
 
 	if (!pCellOwner || !pAsking)
 		return 0;
 
-	// Our own buildings were already decided at 0x4A8FE6. See the fall-through
-	// warning above.
+	// Our own buildings were already decided at 0x4A8FE6. This address is also
+	// reached by FALL-THROUGH from that branch's accept, so without this they
+	// would be re-judged under rules that do not apply to them.
 	if (pCellOwner == pAsking)
 		return 0;
 
-	int const verdict = BuildOffAnyBuilding::AnchorVerdict(
-		BuildOffAnyBuilding::PlacingTypeNow(), pAsking, pCellOwner);
+	auto const scope = AdjacentClasses::Classify(pAsking, pCellOwner);
+	auto const pPlacing = BuildOffAnyBuilding::PlacingTypeNow();
 
-	if (verdict < 0)
-		return 0;        // unset -> leave the engine's own ally logic alone
+	if (!AdjacentClasses::HasAnchorRule(pPlacing, scope))
+		return 0;        // no rule for this scope -> vanilla ally logic stands
 
-	if (verdict == 0)
-		return SkipBuilding;
+	int const range = AdjacentClasses::AnchorRange(
+		pPlacing, scope, pCellBuilding->Type);
 
-	// BOTH SIDES MUST AGREE. The placed type opting in is necessary but not
-	// sufficient: the ANCHOR gets a say too, defaulting to the vanilla field for
-	// that scope. Without this, Adjacent.Anchor.Neutral=yes anchored on civilian
-	// buildings including BaseNormal=no ones -- the modder caught exactly that.
-	auto const scope = BuildOffAnyBuilding::ClassifyScope(pAsking, pCellOwner);
-
-	if (!BuildOffAnyBuilding::AnchorAllowsScope(pCellBuilding->Type, scope))
-		return SkipBuilding;
-
-	return AcceptAnchor;
+	return range >= 0 ? AcceptAnchor : SkipBuilding;
 }

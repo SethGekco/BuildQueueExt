@@ -4,6 +4,7 @@
 #include "AlwaysAvailable.h"
 #include "ExtraQueues.h"
 #include "BuildOffAnyBuilding.h"
+#include "AdjacentClasses.h"
 
 #include <FactoryClass.h>
 #include <HouseClass.h>
@@ -48,6 +49,7 @@ DEFINE_HOOK(0x668BF0, BQExt_RulesClass_Addition_ReadConfig, 0x5)
 	AlwaysAvailable::ReadGlobalConfig(pINI);
 	ExtraQueues::ReadGlobalConfig(pINI);
 	BuildOffAnyBuilding::ReadGlobalConfig(pINI);
+	AdjacentClasses::ReadGlobalConfig(pINI);
 
 	// ChannelTable's state is logged here rather than in its own ReadConfig so
 	// that one line reports every switch. The first shadow run could not be
@@ -95,6 +97,7 @@ DEFINE_HOOK(0x668F6A, BQExt_RulesClass_ReadFile_Tail_ReadTypeTags, 0x5)
 	AlwaysAvailable::ReadTypeConfig(pINI);
 	ExtraQueues::ReadTypeConfig(pINI);
 	BuildOffAnyBuilding::ReadTypeConfig(pINI);
+	AdjacentClasses::ReadTypeConfig(pINI);
 
 	return 0;
 }

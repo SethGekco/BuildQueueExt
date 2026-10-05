@@ -34,6 +34,7 @@
     <ClCompile Include="src\ChannelTable.cpp" />
     <ClCompile Include="src\AlwaysAvailable.cpp" />
     <ClCompile Include="src\BuildOffAnyBuilding.cpp" />
+    <ClCompile Include="src\AdjacentClasses.cpp" />
     <ClCompile Include="src\Hooks.BuildOffAnyBuilding.cpp" />
     <ClCompile Include="src\ExtraQueues.cpp" />
     <ClCompile Include="src\Hooks.ProductionProbe.cpp" />
@@ -49,6 +50,7 @@
     <ClInclude Include="src\ChannelTable.h" />
     <ClInclude Include="src\AlwaysAvailable.h" />
     <ClInclude Include="src\BuildOffAnyBuilding.h" />
+    <ClInclude Include="src\AdjacentClasses.h" />
     <ClInclude Include="src\ExtraQueues.h" />
   </ItemGroup>
 
