@@ -71,6 +71,51 @@ public:
 	// observer slot, a human who started as one, or a defeated player.
 	static bool IsSpectating(HouseClass* pHouse);
 
+	// ===================================================================
+	// `Naval.EitherFactory=yes` — ask #18, a VehicleType both factories accept.
+	//
+	// The modder's framing: `Naval=yes` makes a VehicleType spawn at the ship
+	// yard and ONLY there; drop it and the same unit builds at the war factory
+	// instead. Amphibious units want both, and there is no vanilla way to say so.
+	//
+	// ⚠ ONE CAMEO, NOT TWO. Naval units do not have their own sidebar tab --
+	// `Factory_VehicleType` and `Factory_NavyType` are separate CHANNELS that
+	// both draw in tab 3 (encyclopedia Production-Queues-Factories.md). So this
+	// cannot show a second cameo in a second tab, because there is no second tab
+	// to show it in. What it does is make the single cameo buildable whichever
+	// of the two factories the house owns.
+	//
+	// THE NAVAL MATCH IS INSIDE `HasFactory`, WHICH CANNOT BE HOOKED (it is
+	// Antares-internal). So this is the AlwaysAvailable pattern applied to a
+	// different reason for the same refusal, reusing all three proven seats:
+	//
+	//   0x5F7A89  FindFactory epilogue      -> hand back the wrong-naval factory
+	//   0x4F8361  CanBuild epilogue         -> promote 0 -> 1
+	//   0x50B669  ShouldDisableCameo epilog -> lower the disable
+	//
+	// ⚠ ALL THREE ARE REQUIRED. Getting only the verdict right leaves a cameo
+	// that is present, dark and unclickable -- that cost five playthroughs on
+	// AlwaysAvailable before `ShouldDisableCameo` was found to call `HasFactory`
+	// on its own, never consulting `CanBuild`.
+	//
+	// ⚠ DELIBERATELY NOT TOUCHED: the naval split at 0x4502F4 (channel claim),
+	// 0x4CA07A (abandon) and the four kick-out sites. All are three-way
+	// contended (Antares + Ares + Phobos) and all key the channel off the
+	// PRODUCING BUILDING's naval flag, not the produced type's -- which is why
+	// a war factory and a ship yard already claim *different* channels without
+	// any help from us.
+	static std::set<TechnoTypeClass*> NavalEitherTypes;
+	static bool IsNavalEitherFor(TechnoTypeClass* pType);
+
+	// A usable owned building with `Factory == UnitType`, IGNORING naval-ness.
+	// Mirrors HasFactory's other exclusions (limbo, selling, unpowered).
+	static BuildingClass* FindUnitFactoryEitherNaval(HouseClass* pHouse);
+
+	// True when the type is tagged, the house owns a UnitType factory of the
+	// WRONG naval-ness and none of the right one, and the normal rules pass.
+	// The single predicate all three seats consult, so they cannot disagree.
+	static bool WantsEitherFactory(HouseClass* pHouse, TechnoTypeClass* pType);
+
 	// [BuildQueueExt] AlwaysAvailable.Probe=yes — the diagnostic below.
 	static bool ProbeEnabled;
 
@@ -101,6 +146,7 @@ public:
 	// actually exist. See Hooks.ProductionProbe.cpp for the full account.
 	static void ReadGlobalConfig(CCINIClass* pINI);
 	static void ReadTypeConfig(CCINIClass* pINI);
+	static void ReadNavalConfig(CCINIClass* pINI);
 	static bool IsEnabledFor(TechnoTypeClass* pType);
 
 	// Returns the argument only if it is genuinely one of the engine's

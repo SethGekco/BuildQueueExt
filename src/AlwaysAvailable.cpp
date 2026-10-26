@@ -13,6 +13,9 @@
 
 std::set<TechnoTypeClass*> AlwaysAvailable::Types;
 std::set<TechnoTypeClass*> AlwaysAvailable::SpectatorTypes;
+std::set<TechnoTypeClass*> AlwaysAvailable::NavalEitherTypes;
+static int NavalEitherSubs = 0;
+static int NavalEitherPromotes = 0;
 static int SpectatorSuppressed = 0;
 static int DisableLowered = 0;
 static int DisableLimitKept = 0;
@@ -95,6 +98,108 @@ void AlwaysAvailable::ReadTypeConfig(CCINIClass* pINI)
 		Debug::Log("[BQExt] AlwaysAvailable %s: %s\n",
 			now ? "enabled" : "disabled", pType->ID);
 	}
+}
+
+void AlwaysAvailable::ReadNavalConfig(CCINIClass* pINI)
+{
+	if (!pINI)
+		return;
+
+	// UnitTypes only. The tag overrides the naval FACTORY match, and only
+	// UnitTypes are split into vehicle/navy channels -- infantry and aircraft
+	// have one channel each, so there is nothing for this to override there.
+	for (auto const pType : UnitTypeClass::Array)
+	{
+		if (!pType)
+			continue;
+
+		bool const was = NavalEitherTypes.find(pType) != NavalEitherTypes.end();
+		bool const now = pINI->ReadBool(pType->ID, "Naval.EitherFactory", was);
+
+		if (now == was)
+			continue;
+
+		if (now)
+			NavalEitherTypes.insert(pType);
+		else
+			NavalEitherTypes.erase(pType);
+
+		Debug::Log("[BQExt] Naval.EitherFactory %s: %s (its Naval=%d)\n",
+			now ? "enabled" : "disabled", pType->ID, pType->Naval ? 1 : 0);
+	}
+}
+
+bool AlwaysAvailable::IsNavalEitherFor(TechnoTypeClass* pType)
+{
+	return pType && NavalEitherTypes.find(pType) != NavalEitherTypes.end();
+}
+
+BuildingClass* AlwaysAvailable::FindUnitFactoryEitherNaval(HouseClass* pHouse)
+{
+	if (!pHouse)
+		return nullptr;
+
+	BuildingClass* pFallback = nullptr;
+
+	for (auto const pBld : pHouse->Buildings)
+	{
+		if (!pBld || !pBld->IsAlive || pBld->InLimbo)
+			continue;
+
+		if (pBld->GetCurrentMission() == Mission::Selling
+			|| pBld->QueuedMission == Mission::Selling)
+		{
+			continue;
+		}
+
+		auto const pType = pBld->Type;
+
+		// The whole point: Factory must match, Naval deliberately must NOT.
+		if (!pType || pType->Factory != AbstractType::UnitType)
+			continue;
+
+		if (pBld->HasPower && !pBld->Deactivated)
+			return pBld;
+
+		if (!pFallback)
+			pFallback = pBld;
+	}
+
+	return pFallback;
+}
+
+bool AlwaysAvailable::WantsEitherFactory(
+	HouseClass* pHouse, TechnoTypeClass* pType)
+{
+	if (!Enabled || !pHouse || !pType)
+		return false;
+
+	if (!IsNavalEitherFor(pType))
+		return false;
+
+	if (IsSpectating(pHouse) && !AllowsSpectators(pType))
+		return false;
+
+	// Only step in when the RIGHT factory is absent. With a matching ship yard
+	// present the engine answers correctly on its own, and overriding would be
+	// us re-deciding a question nobody asked.
+	for (auto const pBld : pHouse->Buildings)
+	{
+		if (!pBld || !pBld->IsAlive || pBld->InLimbo || !pBld->Type)
+			continue;
+
+		if (pBld->Type->Factory == AbstractType::UnitType
+			&& pBld->Type->Naval == pType->Naval
+			&& pBld->HasPower && !pBld->Deactivated)
+		{
+			return false;
+		}
+	}
+
+	if (!FindUnitFactoryEitherNaval(pHouse))
+		return false;
+
+	return MeetsNormalRules(pHouse, pType);
 }
 
 bool AlwaysAvailable::AllowsSpectators(TechnoTypeClass* pType)
@@ -239,7 +344,30 @@ BuildingClass* AlwaysAvailable::Resolve(
 
 	auto const pType = IdentifyType(ecx);
 
-	if (!pType || !IsEnabledFor(pType))
+	if (!pType)
+		return pVerdict;
+
+	// Naval.EitherFactory: a tagged UnitType whose own ship yard (or war
+	// factory) is missing gets handed the other one.
+	if (!IsEnabledFor(pType) && WantsEitherFactory(pHouse, pType))
+	{
+		if (auto const pUnitFactory = FindUnitFactoryEitherNaval(pHouse))
+		{
+			if (++NavalEitherSubs == 1 || NavalEitherSubs % 500 == 0)
+			{
+				Debug::Log("[BQExt] Naval.EitherFactory SUBSTITUTE #%d %s ->"
+					" %s (its Naval=%d, unit wants %d)\n",
+					NavalEitherSubs, pType->ID,
+					pUnitFactory->Type ? pUnitFactory->Type->ID : "(?)",
+					pUnitFactory->Type && pUnitFactory->Type->Naval ? 1 : 0,
+					pType->Naval ? 1 : 0);
+			}
+
+			return pUnitFactory;
+		}
+	}
+
+	if (!IsEnabledFor(pType))
 		return pVerdict;
 
 	// The ask is "can spectators BUILD it", so the gate belongs here as well as
@@ -429,6 +557,21 @@ int AlwaysAvailable::ResolveCanBuild(
 	if (!Enabled || incoming != 0 || !pHouse || !pType)
 		return incoming;
 
+	// Naval.EitherFactory shares this seat: same 0 -> 1 promote, different
+	// reason for the engine's 0.
+	if (!IsEnabledFor(pType) && WantsEitherFactory(pHouse, pType)
+		&& !BuildLimitReached(pHouse, pType))
+	{
+		if (++NavalEitherPromotes == 1 || NavalEitherPromotes % 2000 == 0)
+		{
+			Debug::Log("[BQExt] Naval.EitherFactory PROMOTE-CANBUILD #%d %s"
+				" -- 0 -> 1 (wrong-naval factory owned)\n",
+				NavalEitherPromotes, pType->ID);
+		}
+
+		return 1;
+	}
+
 	if (!IsEnabledFor(pType))
 		return incoming;
 
@@ -530,6 +673,15 @@ bool AlwaysAvailable::ResolveDisableCameo(
 	// disabled the cameo there is nothing here to fix.
 	if (!Enabled || !disable || !pHouse || !pType)
 		return disable;
+
+	// Naval.EitherFactory: without this the cameo is present, dark and
+	// unclickable -- ShouldDisableCameo calls HasFactory itself and never
+	// consults CanBuild, which cost five playthroughs to establish.
+	if (!IsEnabledFor(pType) && WantsEitherFactory(pHouse, pType)
+		&& !BuildLimitReached(pHouse, pType))
+	{
+		return false;
+	}
 
 	if (!IsEnabledFor(pType))
 		return disable;

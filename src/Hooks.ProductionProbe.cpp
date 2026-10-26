@@ -95,6 +95,7 @@ DEFINE_HOOK(0x668F6A, BQExt_RulesClass_ReadFile_Tail_ReadTypeTags, 0x5)
 
 	LimboOnComplete::ReadConfig(pINI);
 	AlwaysAvailable::ReadTypeConfig(pINI);
+	AlwaysAvailable::ReadNavalConfig(pINI);
 	ExtraQueues::ReadTypeConfig(pINI);
 	BuildOffAnyBuilding::ReadTypeConfig(pINI);
 	AdjacentClasses::ReadTypeConfig(pINI);
