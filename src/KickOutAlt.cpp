@@ -10,6 +10,23 @@ std::set<BuildingTypeClass*> KickOutAlt::AnyFactory;
 
 static int Accepted = 0;
 static int Considered = 0;
+static int Rejected = 0;
+
+// ⚠ LOG THE NEAR MISSES, NOT JUST THE HITS. Four times in this project a
+// decision seat logged only its terminal outcome, and a run that produced zero
+// lines was undiagnosable. A candidate our tag named but the engine's own
+// conditions refused is exactly the case a future bug report will be about.
+static void LogDecision(char const* why,
+	BuildingClass* pBlocked, BuildingClass* pCandidate)
+{
+	if (++Rejected == 1 || Rejected % 50 == 0)
+	{
+		Debug::Log("[BQExt] KickOut.AltFrom reject #%d (%s) blocked=%s"
+			" candidate=%s\n", Rejected, why,
+			pBlocked->Type ? pBlocked->Type->ID : "(?)",
+			pCandidate->Type ? pCandidate->Type->ID : "(?)");
+	}
+}
 
 void KickOutAlt::ReadGlobalConfig(CCINIClass* pINI)
 {
@@ -147,28 +164,49 @@ bool KickOutAlt::Accepts(BuildingClass* pBlocked, BuildingClass* pCandidate)
 	return false;
 }
 
-BuildingTypeClass* KickOutAlt::TypeForCompare(
+bool KickOutAlt::AcceptsAsExit(
 	BuildingClass* pBlocked, BuildingClass* pCandidate)
 {
-	// Any doubt at all -> hand back the value the stolen instruction would have
-	// produced, so the comparison behaves exactly as vanilla.
-	if (!pBlocked || !pBlocked->Type)
-		return nullptr;
+	++Considered;
 
-	if (!Enabled || !pCandidate || !pCandidate->Type)
-		return pBlocked->Type;
+	if (!Enabled || !pBlocked || !pBlocked->Type
+		|| !pCandidate || !pCandidate->Type)
+	{
+		return false;
+	}
 
 	if (!Accepts(pBlocked, pCandidate))
-		return pBlocked->Type;
+		return false;
 
-	// Returning the CANDIDATE's own type makes `cmp ecx,edx` compare equal, so
-	// the engine treats this building as a valid alternate exit.
-	if (++Accepted == 1 || Accepted % 100 == 0)
+	// =====================================================================
+	// Re-apply the engine's own conditions. We are about to jump over both
+	// Antares' predicate AND the engine's remaining checks at
+	// 0x4444EA-0x444502, so everything they would have tested has to be
+	// tested here or we hand the exit code a candidate it cannot use.
+	//
+	//   0x4444EA  call [ebp]->vt[0x184] ; cmp eax,5  -> Mission::Guard
+	//   0x4444FA  mov eax,[ebp+0x524]   ; test; je   -> Factory must be null
+	if (pCandidate->GetCurrentMission() != Mission::Guard)
+	{
+		LogDecision("mission", pBlocked, pCandidate);
+		return false;
+	}
+
+	// Already building something itself. The accept path at 0x44451F MOVES
+	// the blocked building's FactoryClass* into this one's slot, so a
+	// candidate with its own factory would have it silently overwritten.
+	if (pCandidate->Factory)
+	{
+		LogDecision("busy", pBlocked, pCandidate);
+		return false;
+	}
+
+	if (++Accepted == 1 || Accepted % 50 == 0)
 	{
 		Debug::Log("[BQExt] KickOut.AltFrom ACCEPT #%d blocked=%s ->"
-			" alternate %s  [considered %d]\n",
+			" exiting from %s instead  [considered %d]\n",
 			Accepted, pBlocked->Type->ID, pCandidate->Type->ID, Considered);
 	}
 
-	return pCandidate->Type;
+	return true;
 }
